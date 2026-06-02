@@ -218,19 +218,47 @@ pytest          # from the repo root; runs with coverage (--cov-fail-under=80)
 
 ### 4. Benchmark the matching engine
 
-`benchmarks/bench.py` drives the live C++ engine through the `orderbook` binding with a large
-synthetic order flow (~80% LIMIT / 20% MARKET, both sides, around a drifting mid) and reports
-**throughput** (orders/sec) and the **per-order latency** distribution (p50/p90/p99, microseconds).
-Build the extension first (step 1), then:
+There are **two** benchmarks for the same synthetic workload (~80% LIMIT / 20% MARKET, both sides,
+around a drifting mid, identical tick/quantity ladders): a **native C++** one that isolates the pure
+matching path, and a **Python** one that drives the engine through the pybind11 binding. Comparing
+them shows the per-call binding overhead.
+
+#### Native C++ (pure matching path — no Python, no binding)
+
+`benchmarks/bench.cpp` (CMake target `order_book_bench`) pre-generates the order flow in C++, then
+times `OrderBook::add_order` in a tight loop with `std::chrono::steady_clock`. Flow generation is
+excluded from the timed region. Built `-O2` (Release). It is a benchmark, **not** a ctest test.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+./build/order_book_bench                  # 500k orders/run, seed 7, ~1s total
+./build/order_book_bench 2000000 5 7      # <orders> <repeat> <seed>
+```
+
+Measured on an **Apple M2 Pro (arm64, macOS 26.5)**, **Release/-O2**, 500,000 orders/run, seed 7:
+
+| Metric | Value |
+|--------|-------|
+| Throughput | **~7,790,000 orders/sec** (best of 3 runs) |
+| Latency p50 | **84 ns** |
+| Latency p90 | **250 ns** |
+| Latency p99 | **500 ns** |
+| Trades produced | 466,116 on 500,000 orders |
+
+#### Python (via the pybind11 binding)
+
+`benchmarks/bench.py` drives the live C++ engine through the `orderbook` binding with the same
+workload and reports throughput + the per-order latency distribution (p50/p90/p99, µs). Build the
+extension first (step 1), then:
 
 ```bash
 python benchmarks/bench.py                       # 500k orders/run, ~10s total
 python benchmarks/bench.py --orders 2000000 --repeat 5
 ```
 
-Measured on an **Apple M2 Pro (arm64, macOS 26.5), Python 3.12**, 500,000 orders/run, seed 7
-(driving the engine through the pybind11 binding, so the numbers include the Python→C++ call
-overhead — the matching path itself is faster):
+Measured on the **same Apple M2 Pro (arm64, macOS 26.5), Python 3.12**, 500,000 orders/run, seed 7
+(these numbers **include** the Python→C++ call overhead — the matching path itself is the native
+number above):
 
 | Metric | Value |
 |--------|-------|
@@ -239,6 +267,12 @@ overhead — the matching path itself is faster):
 | Latency p90 | **10.6 µs** |
 | Latency p99 | **18.1 µs** |
 | Trades produced | 466,518 on 500,000 orders |
+
+The native engine is **~42× faster** than the binding-driven path (≈7.79M vs ≈186k orders/sec; p50
+84 ns vs 4.8 µs) — i.e. for this workload the pybind11 call/marshalling cost dominates, and the pure
+matching loop is far cheaper than the Python-binding numbers suggest. (Trade counts differ by ~400
+because the two harnesses use different RNGs — `std::mt19937` vs CPython's Mersenne — for the same
+distribution; the workload shape is identical.)
 
 ## Usage (C++)
 
@@ -296,6 +330,7 @@ For ecosystem context, see [awesome-quant](https://github.com/wilsonfreitas/awes
 order-book-simulator/
 ├── CMakeLists.txt            # CMake build (C++17) + GoogleTest & pybind11 via FetchContent
 ├── benchmarks/
+│   ├── bench.cpp             # Native C++ throughput + latency harness (target order_book_bench, no binding)
 │   └── bench.py              # Throughput + latency harness (drives the engine via the binding)
 ├── include/
 │   ├── order.h               # Order struct, Side / OrderType / TimeInForce enums

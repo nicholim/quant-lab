@@ -74,6 +74,41 @@ Per-repo prioritized "do these next" (analysis only — NOT yet implemented; awa
 
 ## Changelog
 
+## 2026-06-02 — feature-architect — cpp/order-book (native C++ micro-benchmark, isolates matching path)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented the optional-polish item "a native C++
+  micro-benchmark to isolate the matching path from pybind11 overhead." C++/CMake/docs only — no engine
+  logic, bindings, or Python touched. Scoped `git add` to `cpp/order-book/...` + this file (three other
+  agents editing other packages on this branch in parallel — did NOT `git add -A`).
+- **`benchmarks/bench.cpp` (NEW):** pre-generates a synthetic order flow IN C++ (excluded from timing),
+  then times `OrderBook::add_order` in a tight loop with `std::chrono::steady_clock`. Workload mirrors the
+  Python harness `benchmarks/bench.py` exactly (mid=150.0, tick=0.01, `gauss(0,0.02)` drift per order,
+  ~80% LIMIT / 20% MARKET, both sides, qty in {10,25,50,100,200}, LIMIT price offset -2..+2 ticks) so the
+  numbers are directly comparable to the binding numbers. CLI args `[orders] [repeat] [seed]` (default
+  500k / 3 / 7, runs in ~1s). Reports throughput (orders/sec) + per-order latency p50/p90/p99/max in BOTH
+  ns and µs, plus a one-line summary. Uses `std::mt19937` (vs CPython's Mersenne in bench.py) so trade
+  counts differ by ~400 on the same distribution — workload shape identical.
+- **CMake wiring:** new `order_book_bench` executable target, guarded by `option(BUILD_BENCHMARK ON)`,
+  links `orderbook_core`, forced `-O2` even under a Debug/no-build-type configure. It is a plain
+  executable, deliberately NOT registered with ctest (no `add_test`/`gtest_discover_tests` references it),
+  so `ctest` stays a pure test run. Independent of the demo / GoogleTest / pybind11 targets.
+- **Build/gates (REAL numbers, clean Release build):** `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release &&
+  cmake --build build` → all targets green (orderbook_core, order_book_demo, **order_book_bench**,
+  orderbook_tests, _orderbook). `ctest --test-dir build` → **53/53 passed** (0.24s); `ctest -N | grep
+  bench` → empty (bench correctly NOT a test). clang-format not installed on this machine (skipped; code
+  follows the existing .clang-format 4-space style). Python suite untouched (not re-run; no Python edited).
+- **Measured numbers — Apple M2 Pro (arm64, macOS 26.5), Release/-O2, 500,000 orders/run, seed 7:**
+  - **Native C++:** **~7,790,000 orders/sec** (best of 3); latency **p50 84 ns / p90 250 ns / p99 500 ns**,
+    mean 130 ns, max 22.7 µs; 466,116 trades.
+  - **vs Python binding** (existing, same machine/workload): ~186,000 orders/sec; p50 4.8 µs / p90 10.6 µs /
+    p99 18.1 µs; 466,518 trades.
+  - **Native is ~42× faster** (7.79M vs 186k orders/sec; p50 84 ns vs 4.8 µs) — confirms the pybind11
+    call/marshalling cost dominates the binding numbers; the pure matching loop is far cheaper.
+- **Docs:** README "Benchmark the matching engine" section split into Native-C++ + Python-binding
+  subsections (build+run commands, both result tables clearly labeled with arch/build-type/workload, the
+  ~42× comparison + the RNG-difference caveat); project-structure tree gains `bench.cpp`.
+- **User actions:** none beyond eventual push. **Follow-ups:** none required; could add a CMake preset or a
+  Makefile shortcut, or a CI job that runs the bench non-gating for trend tracking (optional).
+
 ## 2026-06-02 — main thread (/improve-quant) — MILESTONE: entire P2 feature backlog DONE + wired end-to-end
 - **All P2 feature-comprehensiveness picks across all 5 packages are now implemented, tested, and reachable
   end-to-end** (CLI/API/UI/sim), on `feature/agent-improvements` (43 commits past the squashed base
