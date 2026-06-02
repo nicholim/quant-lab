@@ -1,9 +1,32 @@
 import os
 from dataclasses import dataclass, field
 
-from dotenv import load_dotenv
+_dotenv_loaded = False
 
-load_dotenv()
+
+def _load_dotenv_once() -> None:
+    """Load a local ``.env`` once so config/secrets can live in a file.
+
+    Lets ``REDIS_URL`` / ``DATABASE_URL`` / ``EXCHANGE`` / ``STORAGE_BACKEND``
+    (and any other config) be set via a ``.env`` in the working dir or a parent
+    (mirrors the options-pricing ``_load_dotenv_once`` pattern). python-dotenv
+    does NOT override variables already present in the environment, so an
+    exported (real) value always wins over ``.env``. Idempotent — repeated calls
+    are no-ops, so re-importing config never re-clobbers a per-test environment.
+    """
+    global _dotenv_loaded
+    if _dotenv_loaded:
+        return
+    _dotenv_loaded = True
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:  # pragma: no cover - python-dotenv is an optional convenience
+        return
+    load_dotenv(find_dotenv(usecwd=True))
+
+
+# Pick up a local .env at import time, before any Config field reads an env var.
+_load_dotenv_once()
 
 
 @dataclass
