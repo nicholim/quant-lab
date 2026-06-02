@@ -7,8 +7,8 @@
 [![Tests](https://img.shields.io/badge/tests-173%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~98%25-brightgreen.svg)](pyproject.toml)
 
-> An asyncio daemon that streams exchange trades over WebSocket (Binance or Coinbase via a
-> pluggable adapter), normalizes them to typed records, caches the latest state in Redis, and
+> An asyncio daemon that streams exchange trades over WebSocket (Binance, Coinbase, Kraken, or
+> Bitstamp via a pluggable adapter), normalizes them to typed records, caches the latest state in Redis, and
 > batch-writes ticks + 1-minute OHLCV bars to a pluggable storage backend (TimescaleDB or DuckDB).
 > A `replay()` feeder streams stored history back out for backtests.
 
@@ -66,8 +66,9 @@ graph LR
 - **WebSocket Ingestion** — Async client with auto-reconnect and exponential backoff (up to 60s)
 - **Pluggable exchanges** — An `ExchangeAdapter` protocol (`src/adapters.py`) captures everything that
   varies per venue (WS URL, subscribe payload, raw-message → `Trade` parsing). Ships **Binance**
-  (default) and **Coinbase Exchange**; select with `EXCHANGE=binance|coinbase`. Adding a venue is one
-  small class — the client, normalizer schema, and storage are untouched
+  (default), **Coinbase**, **Kraken**, and **Bitstamp**; select with `EXCHANGE=binance|coinbase|kraken|bitstamp`
+  or the `--exchange` CLI flag. Adding a venue is one small class — the client, normalizer schema, and
+  storage are untouched
 - **Tick Normalization** — Standardize raw trade messages into typed `Trade` dataclass
 - **OHLCV Aggregation** — Real-time candlestick bar construction from tick-level data; a single-trade
   minute still produces a valid bar and the final in-progress bar is flushed on shutdown (`flush_all()`)
@@ -127,7 +128,14 @@ python main.py --symbols btcusdt,ethusdt --log-level INFO
 ## Configuration
 
 All settings are read from environment variables (or a `.env` file) by `src/config.py`. CLI flags
-`--symbols` and `--log-level` override the corresponding env vars.
+`--symbols`, `--exchange`, and `--log-level` override the corresponding env vars. Local config and
+secrets can live in a `.env` file (loaded once at import via python-dotenv); real environment
+variables always take precedence over `.env`.
+
+```bash
+# Pick the venue from the command line (overrides EXCHANGE / .env)
+python main.py --exchange kraken --symbols btcusd,ethusd
+```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -135,9 +143,9 @@ All settings are read from environment variables (or a `.env` file) by `src/conf
 | `STORAGE_BACKEND` | `timescale` | Storage sink: `timescale` (external TimescaleDB) or `duckdb` (local file) |
 | `DATABASE_URL` | `postgresql://user:password@localhost:5432/marketdata` | TimescaleDB connection (used when `STORAGE_BACKEND=timescale`) |
 | `DUCKDB_PATH` | `data/marketdata.duckdb` | Local DuckDB file path (used when `STORAGE_BACKEND=duckdb`) |
-| `EXCHANGE` | `binance` | Exchange adapter: `binance` (URL-embedded `@trade` streams) or `coinbase` (Coinbase Exchange `matches` feed) |
-| `WS_URL` | `wss://stream.binance.com:9443/ws` | WebSocket endpoint (used by the Binance adapter; Coinbase uses its own fixed feed) |
-| `SYMBOLS` | `btcusdt,ethusdt` | Comma-separated trading pairs (Coinbase: `btcusd`/`btc-usd`, auto-mapped to `BTC-USD` products) |
+| `EXCHANGE` | `binance` | Exchange adapter: `binance` (URL-embedded `@trade` streams), `coinbase` (`matches` feed), `kraken` (v1 `trade` feed), or `bitstamp` (`live_trades` channel). Overridable per-run with `--exchange` |
+| `WS_URL` | `wss://stream.binance.com:9443/ws` | WebSocket endpoint (used by the Binance adapter; Coinbase/Kraken/Bitstamp use their own fixed feeds) |
+| `SYMBOLS` | `btcusdt,ethusdt` | Comma-separated trading pairs (Coinbase/Bitstamp: `btcusd`; Kraken auto-maps `btcusd` → `XBT/USD`) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `BATCH_SIZE` | `100` | Trades buffered before a batch DB insert |
 | `FLUSH_INTERVAL_SECONDS` | `5` | Max seconds between DB flushes |
@@ -180,10 +188,25 @@ client, normalizer schema, and storage never change. `EXCHANGE` (default `binanc
   message (`{"type":"match","product_id":"BTC-USD","price":"…","size":"…","side":"sell",…}`) is
   parsed to a `Trade`. Coinbase's `side` is the **maker** side, so it's flipped to the **taker/
   aggressor** side to stay consistent with Binance ("who crossed the spread"). Symbols round-trip
-  `btcusd` ⇄ `BTC-USD`. Both venues are keyless public market data.
+  `btcusd` ⇄ `BTC-USD`.
+- **`kraken`** — `KrakenAdapter`: connects to the fixed `wss://ws.kraken.com` (v1) feed and
+  subscribes to the `trade` channel. A trade update arrives as a JSON **array**
+  (`[channelID, [[price, volume, time, side, orderType, misc], …], "trade", "XBT/USD"]`); the first
+  fill is parsed. Kraken's `side` (`b`/`s`) is **already the taker/aggressor side**, so no flip is
+  needed. Symbols round-trip `btcusd` ⇄ `XBT/USD` (Kraken uses `XBT` for bitcoin). A batched update
+  yields its first fill (documented simplification).
+- **`bitstamp`** — `BitstampAdapter`: connects to the fixed `wss://ws.bitstamp.net` feed and
+  subscribes to the `live_trades_<pair>` channel. A trade arrives as
+  `{"event":"trade","channel":"live_trades_btcusd","data":{"price":…,"amount":…,"type":0,"microtimestamp":…}}`;
+  `type` (`0`=buy, `1`=sell) is the taker/aggressor side (no flip). `microtimestamp` is preferred for
+  the timestamp, falling back to `timestamp`. Symbols are the channel suffix (`btcusd`) directly.
+
+  All four venues are keyless public market data.
 
   ```bash
   EXCHANGE=coinbase SYMBOLS=btcusd,ethusd python main.py
+  python main.py --exchange kraken --symbols btcusd
+  python main.py --exchange bitstamp --symbols btcusd
   ```
 
 ## Usage
@@ -239,7 +262,7 @@ library or a standalone database engine.
 | | This pipeline | [cryptofeed](https://github.com/bmoscon/cryptofeed) | [ccxt-pro](https://docs.ccxt.com/#/ccxt.pro/README) | [ArcticDB](https://github.com/man-group/ArcticDB) |
 |---|---|---|---|---|
 | What it is | Streaming ingest + storage daemon | Crypto WS feed handler library | Unified exchange WS/REST client | DataFrame time-series store |
-| Exchanges | Binance + Coinbase (`@trade` / `matches`), pluggable adapter | 40+ exchanges, many channels | 100+ exchanges (unified API) | N/A (storage only) |
+| Exchanges | Binance + Coinbase + Kraken + Bitstamp, pluggable adapter | 40+ exchanges, many channels | 100+ exchanges (unified API) | N/A (storage only) |
 | Channels | Trades → 1m OHLCV | trades, L2/L3 book, ticker, funding, … | trades, book, ticker, OHLCV, orders | N/A |
 | Persistence | Built-in, pluggable: Redis cache + TimescaleDB or local DuckDB | Pluggable backends (Redis, Mongo, Kafka, …) | None (you write your own) | Its core job (S3/LMDB, versioned) |
 | Replay / research feeder | Yes (`Pipeline.replay()` over the store) | No | No | Read API (it is the store) |
@@ -251,8 +274,8 @@ reconnect, typed normalization, batched writes that survive a flush failure, and
 schema with hypertables and per-symbol indexes already wired up.
 
 **What it intentionally does *not* do:** no order books / ticker / funding channels, no order
-placement, and only the trade-stream shape (one channel) on the two adapters it ships (Binance,
-Coinbase) — not cryptofeed's 40+ venues or many channels. It is not a database engine — Timescale
+placement, and only the trade-stream shape (one channel) on the four adapters it ships (Binance,
+Coinbase, Kraken, Bitstamp) — not cryptofeed's 40+ venues or many channels. It is not a database engine — Timescale
 or DuckDB does the storage, ArcticDB-style versioning/time-travel is out of scope.
 
 **Who it's for:** someone who wants their own durable trade + OHLCV store from a crypto stream and
@@ -271,7 +294,7 @@ market-data-pipeline/
 ├── requirements.txt
 └── src/
     ├── config.py             # Dataclass-based config from env vars
-    ├── adapters.py           # ExchangeAdapter protocol + Binance/Coinbase adapters
+    ├── adapters.py           # ExchangeAdapter protocol + Binance/Coinbase/Kraken/Bitstamp adapters
     ├── websocket_client.py   # Async WS client with auto-reconnect (driven by an adapter)
     ├── normalizer.py         # Trade/OHLCV normalization (parsing delegated to the adapter)
     ├── cache.py              # Redis caching layer (prices, trades, pub/sub)
@@ -323,7 +346,7 @@ file (`DUCKDB_PATH`), so the worker needs only Redis + a writable disk.
    free tier or Aiven). Then in the Render dashboard set `STORAGE_BACKEND=timescale`
    and paste the connection string into the `DATABASE_URL` secret (marked
    `sync: false`, so Render prompts for it on deploy).
-5. Adjust `EXCHANGE` (`binance`/`coinbase`), `WS_URL`, `SYMBOLS`, and
+5. Adjust `EXCHANGE` (`binance`/`coinbase`/`kraken`/`bitstamp`), `WS_URL`, `SYMBOLS`, and
    `MAX_BUFFER_SIZE` env vars as needed.
 
 The service is defined in the **root `render.yaml`** (one blueprint for the whole monorepo)

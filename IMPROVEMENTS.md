@@ -74,6 +74,55 @@ Per-repo prioritized "do these next" (analysis only — NOT yet implemented; awa
 
 ## Changelog
 
+## 2026-06-02 — feature-architect — packages/market-data (Kraken + Bitstamp adapters, --exchange flag, dotenv parity)
+- Branch `feature/agent-improvements` (NOT pushed). Optional-polish pass: two more keyless-public exchange
+  adapters, a `--exchange` CLI flag, and `_load_dotenv_once()` parity with options-pricing. Purely ADDITIVE —
+  the Binance default path is byte-identical, every new flag/adapter is opt-in. Scoped `git add` to
+  `packages/market-data/...` + this file only (three other agents on this branch in parallel).
+- **`KrakenAdapter`** (`EXCHANGE=kraken`): Kraken WebSocket **v1** public `trade` feed at the fixed
+  `wss://ws.kraken.com`; subscribe `{"event":"subscribe","subscription":{"name":"trade"},"pair":[...]}`.
+  Trade updates arrive as JSON **arrays** (not objects): `[channelID, [[price, volume, time, side,
+  orderType, misc], ...], "trade", "XBT/USD"]`. Side `b`/`s` is **already the taker/aggressor side** (NO
+  flip, unlike Coinbase). Symbols round-trip `btcusd` <-> `XBT/USD` (Kraken uses `XBT` for bitcoin).
+  ASSUMPTION (documented in code + README): a batched update returns its **first** fill (the pipeline's
+  one-message->one-Trade contract; expanding batches would widen the adapter contract — out of scope).
+- **`BitstampAdapter`** (`EXCHANGE=bitstamp`): Bitstamp `live_trades_<pair>` channel at the fixed
+  `wss://ws.bitstamp.net`; subscribe `{"event":"bts:subscribe","data":{"channel":"live_trades_btcusd"}}`.
+  Trade envelope: `{"event":"trade","channel":"live_trades_btcusd","data":{"price","amount","type",
+  "timestamp","microtimestamp",...}}`. ASSUMPTION (documented): `type` 0=buy/1=sell is the taker/aggressor
+  side (no flip); `microtimestamp` (us) preferred, falls back to `timestamp` (s). Channel suffix == the
+  pipeline's symbol (`btcusd`) directly. NOTE: Bitstamp subscribes one channel per frame; the single-payload
+  client subscribes the first symbol's channel (documented).
+- **Protocol widened to `dict | list`:** Kraken sends arrays, so `ExchangeAdapter.normalize_trade`,
+  `TickNormalizer.normalize_trade`, `Pipeline._on_message`, and the WS-client callback type now accept
+  `dict | list`; Binance/Coinbase gained a defensive `isinstance(raw, dict)` guard. `build_adapter` +
+  `_ADAPTERS` + `build_exchange_adapter` route kraken/bitstamp to their default-URL adapters.
+- **`--exchange` CLI flag** (`main.py`): overrides `EXCHANGE`/`.env`, defaults to the prior behavior when
+  unset. Refactored the un-testable inline `main()` into importable `build_parser()` + `build_config(args)`
+  + `main(argv=None)` (mirrors the backtesting CLI pattern) so the wiring is unit-testable without a loop.
+- **dotenv parity:** replaced config.py's bare `load_dotenv()` with an idempotent `_load_dotenv_once()`
+  (mirrors options-pricing: `find_dotenv(usecwd=True)`, latched, ImportError-safe). Real env vars override
+  `.env`. `python-dotenv==1.0.0` was already pinned; `.env` already gitignored; `.env.example` EXCHANGE
+  comment expanded to list all four venues.
+- **Tests:** `test_adapters.py` — protocol conformance for all four, `build_adapter` kraken/bitstamp +
+  case-insensitive + unknown-raises (the stale `"kraken"`-is-unknown test updated to `"bogus"`);
+  Kraken/Bitstamp exact normalization, side mapping, batch-first-fill, event-object/non-trade-channel/
+  empty/short/malformed -> None, fixed URL, subscribe payload + symbol round-trips, non-XBT pair, and a
+  Binance/Coinbase list-payload-ignored guard; `build_exchange_adapter` kraken/bitstamp; an END-TO-END
+  Kraken pipeline run driving `MarketDataClient` with a FakeWebSocket replaying canned array messages (+ a
+  subscription-status object) -> asserts cache/publish/batch-flush, aggressor sides, and the subscribe JSON.
+  NEW `test_cli.py` — `--exchange` selects each venue + lowercases + overrides a real `EXCHANGE` env var +
+  default-unset preserves binance; dotenv loads a tmp `.env`, real env wins over `.env`, fills unset vars,
+  idempotency latch, with an autouse env-snapshot fixture so `load_dotenv`'s os.environ mutations never leak.
+- **Gate (REAL numbers):** `python -m pytest` -> **214 passed**, coverage **98.68%** (gate
+  `--cov-fail-under=85`; `adapters.py` 98% — the only 3 uncovered lines are the Protocol `...` stubs;
+  `config.py` 100%, `pipeline.py`/`normalizer.py` >=95%). `ruff check .` clean, `ruff format --check .` clean
+  (26 files), `mypy` clean (10 source files). NOTE: a `# type:`-prefixed comment in the Bitstamp parser was
+  mis-read by mypy 2.1.0 as a type comment (syntax error) — reworded to `# data["type"]:`.
+- **User actions:** none beyond eventual push. **Follow-ups:** all market-data picks done; Kraken batch
+  updates could be expanded to multiple Trades (needs a list-returning adapter contract); Bitstamp
+  multi-symbol needs one subscribe frame per channel (client currently sends one).
+
 ## 2026-06-02 — feature-architect — packages/backtesting (dashboard: allow_short toggle + hrp objective)
 - Branch `feature/agent-improvements` (NOT pushed). Polish pass closing the optional follow-up flagged by
   prior backtesting passes: surfaced native short selling + the HRP objective in the Dash dashboard
