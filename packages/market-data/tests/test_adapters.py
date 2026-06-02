@@ -13,8 +13,10 @@ import pytest
 
 from src.adapters import (
     BinanceAdapter,
+    BitstampAdapter,
     CoinbaseAdapter,
     ExchangeAdapter,
+    KrakenAdapter,
     build_adapter,
 )
 from src.config import Config
@@ -48,24 +50,60 @@ COINBASE_MATCH = {
 }
 
 
+# Kraken WebSocket v1 trade update: [channelID, [[trade...], ...], "trade", "PAIR"].
+# Each inner trade is [price, volume, time, side, orderType, misc]; side b/s is
+# the taker/aggressor side (no flip needed). Times are seconds.fraction strings.
+KRAKEN_TRADE = [
+    0,
+    [["5541.20000", "0.15850568", "1534614057.321597", "s", "l", ""]],
+    "trade",
+    "XBT/USD",
+]
+
+# Bitstamp live_trades channel message envelope; data.type 0=buy, 1=sell
+# (taker/aggressor side). microtimestamp is microseconds-since-epoch (string).
+BITSTAMP_TRADE = {
+    "event": "trade",
+    "channel": "live_trades_btcusd",
+    "data": {
+        "id": 123456789,
+        "timestamp": "1505558814",
+        "amount": 0.01513062,
+        "amount_str": "0.01513062",
+        "price": 212.8,
+        "price_str": "212.8",
+        "type": 0,
+        "microtimestamp": "1505558814000000",
+        "buy_order_id": 111,
+        "sell_order_id": 222,
+    },
+}
+
+
 # --- Protocol conformance --------------------------------------------------
 
 
 class TestProtocolConformance:
-    def test_both_adapters_are_exchange_adapters(self):
+    def test_all_adapters_are_exchange_adapters(self):
         assert isinstance(BinanceAdapter(), ExchangeAdapter)
         assert isinstance(CoinbaseAdapter(), ExchangeAdapter)
+        assert isinstance(KrakenAdapter(), ExchangeAdapter)
+        assert isinstance(BitstampAdapter(), ExchangeAdapter)
 
     def test_build_adapter_selects_by_name(self):
         assert isinstance(build_adapter("binance"), BinanceAdapter)
         assert isinstance(build_adapter("coinbase"), CoinbaseAdapter)
+        assert isinstance(build_adapter("kraken"), KrakenAdapter)
+        assert isinstance(build_adapter("bitstamp"), BitstampAdapter)
 
     def test_build_adapter_is_case_insensitive(self):
         assert isinstance(build_adapter("COINBASE"), CoinbaseAdapter)
+        assert isinstance(build_adapter("Kraken"), KrakenAdapter)
+        assert isinstance(build_adapter("BITSTAMP"), BitstampAdapter)
 
     def test_build_adapter_unknown_raises(self):
-        with pytest.raises(ValueError, match="Unknown EXCHANGE 'kraken'"):
-            build_adapter("kraken")
+        with pytest.raises(ValueError, match="Unknown EXCHANGE 'bogus'"):
+            build_adapter("bogus")
 
 
 # --- Binance adapter -------------------------------------------------------
@@ -107,6 +145,10 @@ class TestBinanceAdapter:
         adapter = BinanceAdapter()
         assert adapter.normalize_trade({"garbage": True}) is None
         assert adapter.normalize_trade({"s": "BTCUSDT", "p": "notafloat"}) is None
+
+    def test_list_payload_ignored(self):
+        # Binance never sends arrays; defensively ignore a non-dict payload.
+        assert BinanceAdapter().normalize_trade([1, 2, 3]) is None
 
     def test_ws_url_embeds_streams(self):
         adapter = BinanceAdapter("wss://stream.binance.com:9443/ws")
@@ -168,6 +210,10 @@ class TestCoinbaseAdapter:
         adapter = CoinbaseAdapter()
         assert adapter.normalize_trade({"type": "heartbeat"}) is None
 
+    def test_list_payload_ignored(self):
+        # Coinbase never sends arrays; defensively ignore a non-dict payload.
+        assert CoinbaseAdapter().normalize_trade([1, 2, 3]) is None
+
     def test_malformed_match_returns_none(self):
         adapter = CoinbaseAdapter()
         # Right type but missing required fields.
@@ -220,6 +266,203 @@ class TestCoinbaseAdapter:
 
     def test_name(self):
         assert CoinbaseAdapter().name == "coinbase"
+
+
+# --- Kraken adapter --------------------------------------------------------
+
+
+class TestKrakenAdapter:
+    def test_normalizes_trade_exactly(self):
+        adapter = KrakenAdapter()
+        trade = adapter.normalize_trade(KRAKEN_TRADE)
+        assert trade == Trade(
+            symbol="btcusd",  # XBT/USD -> btcusd
+            price=5541.20000,
+            quantity=0.15850568,
+            # Kraken side "s" is already the taker/aggressor side -> "sell".
+            side="sell",
+            timestamp=datetime.fromtimestamp(1534614057.321597, tz=UTC),
+            exchange="kraken",
+        )
+
+    def test_buy_side_maps_to_buy(self):
+        adapter = KrakenAdapter()
+        msg = [0, [["100.0", "1.0", "1534614057.0", "b", "l", ""]], "trade", "XBT/USD"]
+        trade = adapter.normalize_trade(msg)
+        assert trade is not None
+        assert trade.side == "buy"
+
+    def test_first_trade_of_a_batch_is_returned(self):
+        adapter = KrakenAdapter()
+        msg = [
+            0,
+            [
+                ["100.0", "1.0", "1534614057.0", "b", "l", ""],
+                ["101.0", "2.0", "1534614058.0", "s", "m", ""],
+            ],
+            "trade",
+            "XBT/USD",
+        ]
+        trade = adapter.normalize_trade(msg)
+        assert trade is not None
+        assert trade.price == 100.0
+        assert trade.side == "buy"
+
+    def test_event_object_ignored(self):
+        # Subscription acks / system status are JSON objects, not arrays.
+        adapter = KrakenAdapter()
+        status = {"event": "subscriptionStatus", "status": "subscribed"}
+        assert adapter.normalize_trade(status) is None
+        assert adapter.normalize_trade({"event": "heartbeat"}) is None
+
+    def test_non_trade_channel_ignored(self):
+        adapter = KrakenAdapter()
+        msg = [0, [["1", "1", "1.0", "b", "l", ""]], "ticker", "XBT/USD"]
+        assert adapter.normalize_trade(msg) is None
+
+    def test_empty_trade_list_returns_none(self):
+        adapter = KrakenAdapter()
+        assert adapter.normalize_trade([0, [], "trade", "XBT/USD"]) is None
+
+    def test_short_array_returns_none(self):
+        adapter = KrakenAdapter()
+        assert adapter.normalize_trade([0, []]) is None
+
+    def test_malformed_trade_returns_none(self):
+        adapter = KrakenAdapter()
+        bad = [0, [["notafloat", "1.0", "1.0", "b", "l", ""]], "trade", "XBT/USD"]
+        assert adapter.normalize_trade(bad) is None
+
+    def test_ws_url_is_fixed_feed(self):
+        adapter = KrakenAdapter()
+        assert adapter.ws_url(["btcusd"]) == "wss://ws.kraken.com"
+
+    def test_subscribe_payload_maps_symbols_to_pairs(self):
+        adapter = KrakenAdapter()
+        payload = adapter.subscribe_payload(["btcusd", "ethusd"])
+        assert payload == {
+            "event": "subscribe",
+            "subscription": {"name": "trade"},
+            "pair": ["XBT/USD", "ETH/USD"],
+        }
+
+    def test_subscribe_accepts_already_slashed_and_xbt(self):
+        adapter = KrakenAdapter()
+        payload = adapter.subscribe_payload(["XBT/USD", "xbteur"])
+        assert payload is not None
+        assert payload["pair"] == ["XBT/USD", "XBT/EUR"]
+
+    def test_subscribe_short_symbol_left_unquoted(self):
+        # A symbol too short to split into base + 3-char quote maps to bare base.
+        adapter = KrakenAdapter()
+        payload = adapter.subscribe_payload(["btc"])
+        assert payload is not None
+        assert payload["pair"] == ["XBT"]
+
+    def test_pair_round_trips_to_pipeline_symbol(self):
+        adapter = KrakenAdapter()
+        # configured btcusd -> XBT/USD on subscribe -> btcusd on parse
+        pair = adapter.subscribe_payload(["btcusd"])["pair"][0]
+        assert pair == "XBT/USD"
+        msg = [0, [["1", "1", "1.0", "b", "l", ""]], "trade", pair]
+        trade = adapter.normalize_trade(msg)
+        assert trade is not None
+        assert trade.symbol == "btcusd"
+
+    def test_non_xbt_pair_round_trips_unchanged(self):
+        # A non-bitcoin pair keeps its base (no XBT<->btc remap).
+        adapter = KrakenAdapter()
+        msg = [0, [["3000.0", "1.0", "1.0", "b", "l", ""]], "trade", "ETH/USD"]
+        trade = adapter.normalize_trade(msg)
+        assert trade is not None
+        assert trade.symbol == "ethusd"
+
+    def test_name(self):
+        assert KrakenAdapter().name == "kraken"
+
+
+# --- Bitstamp adapter ------------------------------------------------------
+
+
+class TestBitstampAdapter:
+    def test_normalizes_trade_exactly(self):
+        adapter = BitstampAdapter()
+        trade = adapter.normalize_trade(BITSTAMP_TRADE)
+        assert trade == Trade(
+            symbol="btcusd",
+            price=212.8,
+            quantity=0.01513062,
+            # type 0 = buy (taker/aggressor side).
+            side="buy",
+            timestamp=datetime.fromtimestamp(1505558814000000 / 1_000_000, tz=UTC),
+            exchange="bitstamp",
+        )
+
+    def test_type_one_maps_to_sell(self):
+        adapter = BitstampAdapter()
+        msg = {**BITSTAMP_TRADE, "data": {**BITSTAMP_TRADE["data"], "type": 1}}
+        trade = adapter.normalize_trade(msg)
+        assert trade is not None
+        assert trade.side == "sell"
+
+    def test_falls_back_to_timestamp_without_microtimestamp(self):
+        adapter = BitstampAdapter()
+        data = {k: v for k, v in BITSTAMP_TRADE["data"].items() if k != "microtimestamp"}
+        msg = {**BITSTAMP_TRADE, "data": data}
+        trade = adapter.normalize_trade(msg)
+        assert trade is not None
+        assert trade.timestamp == datetime.fromtimestamp(1505558814, tz=UTC)
+
+    def test_subscription_ack_ignored(self):
+        adapter = BitstampAdapter()
+        ack = {
+            "event": "bts:subscription_succeeded",
+            "channel": "live_trades_btcusd",
+            "data": {},
+        }
+        assert adapter.normalize_trade(ack) is None
+
+    def test_reconnect_request_ignored(self):
+        adapter = BitstampAdapter()
+        assert adapter.normalize_trade({"event": "bts:request_reconnect", "data": {}}) is None
+
+    def test_malformed_trade_returns_none(self):
+        adapter = BitstampAdapter()
+        # Right event but missing data fields.
+        assert adapter.normalize_trade({"event": "trade", "data": {}}) is None
+        # Non-numeric price.
+        bad = {**BITSTAMP_TRADE, "data": {**BITSTAMP_TRADE["data"], "price": "NaN-ish"}}
+        assert adapter.normalize_trade(bad) is None
+
+    def test_ws_url_is_fixed_feed(self):
+        adapter = BitstampAdapter()
+        assert adapter.ws_url(["btcusd"]) == "wss://ws.bitstamp.net"
+
+    def test_subscribe_payload_maps_first_symbol_to_channel(self):
+        adapter = BitstampAdapter()
+        payload = adapter.subscribe_payload(["btcusd"])
+        assert payload == {
+            "event": "bts:subscribe",
+            "data": {"channel": "live_trades_btcusd"},
+        }
+
+    def test_subscribe_strips_dashes_and_slashes(self):
+        adapter = BitstampAdapter()
+        payload = adapter.subscribe_payload(["BTC-USD"])
+        assert payload is not None
+        assert payload["data"]["channel"] == "live_trades_btcusd"
+
+    def test_channel_round_trips_to_pipeline_symbol(self):
+        adapter = BitstampAdapter()
+        channel = adapter.subscribe_payload(["btcusd"])["data"]["channel"]
+        assert channel == "live_trades_btcusd"
+        msg = {**BITSTAMP_TRADE, "channel": channel}
+        trade = adapter.normalize_trade(msg)
+        assert trade is not None
+        assert trade.symbol == "btcusd"
+
+    def test_name(self):
+        assert BitstampAdapter().name == "bitstamp"
 
 
 # --- Normalizer delegation -------------------------------------------------
@@ -279,6 +522,16 @@ class TestConfigSelection:
         cfg = Config()
         cfg.exchange = "coinbase"
         assert isinstance(build_exchange_adapter(cfg), CoinbaseAdapter)
+
+    def test_build_exchange_adapter_kraken(self):
+        cfg = Config()
+        cfg.exchange = "kraken"
+        assert isinstance(build_exchange_adapter(cfg), KrakenAdapter)
+
+    def test_build_exchange_adapter_bitstamp(self):
+        cfg = Config()
+        cfg.exchange = "bitstamp"
+        assert isinstance(build_exchange_adapter(cfg), BitstampAdapter)
 
     def test_build_exchange_adapter_unknown_raises(self):
         cfg = Config()
@@ -437,3 +690,46 @@ class TestCoinbasePipelineEndToEnd:
         assert all(t["exchange"] == "coinbase" for t in flushed)
         # the subscribe payload was actually sent on the wire
         assert len(ws.sent) == 1
+
+
+class TestKrakenPipelineEndToEnd:
+    async def test_pipeline_normalizes_kraken_messages_end_to_end(
+        self, monkeypatch, fake_ws_factory
+    ):
+        cfg = Config()
+        cfg.exchange = "kraken"
+        cfg.symbols = ["btcusd"]
+        cfg.batch_size = 2
+        p = Pipeline(cfg)
+        p.cache = _FakeCache()
+        p.storage = _FakeStorage()
+
+        # A subscription-status object (ignored) + two canned Kraken trade arrays.
+        messages = [
+            json.dumps({"event": "subscriptionStatus", "status": "subscribed"}),
+            json.dumps([0, [["400.00", "1.0", "1534614057.0", "b", "l", ""]], "trade", "XBT/USD"]),
+            json.dumps([0, [["401.00", "2.0", "1534614058.0", "s", "m", ""]], "trade", "XBT/USD"]),
+        ]
+        ws = fake_ws_factory(messages=messages)
+
+        def connect(url, **kwargs):
+            p.client._running = False
+            return ws
+
+        monkeypatch.setattr("src.websocket_client.websockets.connect", connect)
+
+        p.client.on_message(p._on_message)
+        await p.client.connect(cfg.symbols)
+
+        assert p.cache.prices["btcusd"][0] == 401.00
+        assert len(p.cache.pushed) == 2
+        assert len(p.cache.published) == 2
+        assert len(p.storage.trades_inserted) == 1
+        flushed = p.storage.trades_inserted[0]
+        # Kraken side is already the aggressor side: b -> buy, s -> sell.
+        assert [t["side"] for t in flushed] == ["buy", "sell"]
+        assert all(t["exchange"] == "kraken" for t in flushed)
+        # the subscribe payload was sent on the wire
+        assert len(ws.sent) == 1
+        sent = json.loads(ws.sent[0])
+        assert sent["pair"] == ["XBT/USD"]
