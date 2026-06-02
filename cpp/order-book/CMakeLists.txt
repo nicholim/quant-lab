@@ -15,6 +15,26 @@ add_executable(order_book_demo src/main.cpp)
 target_link_libraries(order_book_demo orderbook_core)
 
 # ---------------------------------------------------------------------------
+# Native C++ micro-benchmark (no Python / no pybind11 overhead).
+# Isolates the pure matching path; reports throughput + latency percentiles.
+# This is a benchmark, NOT a test -- it is deliberately NOT registered with
+# ctest (no add_test / gtest_discover_tests call references it). It is a plain
+# executable target, built alongside the demo, and guarded so it can be turned
+# off independently of the demo/GoogleTest/pybind11 targets.
+# Built with -O2 by default (overridable) so the numbers reflect optimized code.
+# ---------------------------------------------------------------------------
+option(BUILD_BENCHMARK "Build the native C++ matching-engine benchmark" ON)
+
+if(BUILD_BENCHMARK)
+    add_executable(order_book_bench benchmarks/bench.cpp)
+    target_link_libraries(order_book_bench orderbook_core)
+    # Ensure the benchmark is optimized even in a no-build-type / Debug configure.
+    target_compile_options(order_book_bench PRIVATE
+        $<$<OR:$<CONFIG:Debug>,$<CONFIG:>>:-O2>
+    )
+endif()
+
+# ---------------------------------------------------------------------------
 # Testing: GoogleTest via FetchContent (no system install required).
 # ---------------------------------------------------------------------------
 enable_testing()
