@@ -68,7 +68,7 @@ Pure-function pricing core (`src/`), consumed by two interchangeable front ends 
 | **Charts** | `src/greeks_visualizer.py` | Greeks vs spot/time, 3D price surface (`plot_price_surface`), payoff diagrams, **real IV smile/surface** (`plot_market_iv_smile` / `plot_market_iv_surface`) from market data |
 | **Live market data** | `src/market_data.py` | Price REAL option chains from FREE data: chains/expirations via yfinance, spot via Finnhub (`FINNHUB_API_KEY`) with yfinance fallback; `price_chain` adds `model_price`, `our_iv`, `mispricing`. Bundled offline sample chain (`--offline` / `OPTIONS_PRICING_OFFLINE=1`) keeps the demo running with no network |
 | **CLI demo** | `main.py` | Textbook demo (no args) **or** `python main.py --symbol AAPL [--expiry … --type call\|put --offline]` to price a live chain |
-| **Web app** | `app.py` | Streamlit dashboard: Calculator tab (parameter sliders) + Live market tab (fetch + price a chain, IV smile) |
+| **Web app** | `app.py` | Streamlit dashboard: Calculator tab (parameter sliders) + Live market tab (fetch + price a chain, IV smile) + IV surface tab (multi-expiry solved IV surface + per-expiry smile + vectorized batch pricing, offline-safe) |
 
 ## Tech Stack
 
@@ -152,9 +152,17 @@ premium (`~$0.25`) — the binomial tree captures it, the closed-form Black-Scho
 streamlit run app.py
 ```
 
-Opens a dashboard at `http://localhost:8501` with live sliders for `S, K, T, r, σ`, side-by-side
-Black-Scholes vs binomial (European/American) prices, a Greeks table, payoff and delta charts, and
-an IV solver. Deployment to Render or Streamlit Community Cloud is documented in [DEPLOY.md](DEPLOY.md).
+Opens a dashboard at `http://localhost:8501` with three tabs:
+- **Calculator** — live sliders for `S, K, T, r, σ`, side-by-side Black-Scholes vs binomial
+  (European/American) prices, a Greeks table, payoff and delta charts, and an IV solver.
+- **Live market** — fetch and price a real option chain for a symbol/expiry, with the IV smile.
+- **IV surface** — fetch chains across **multiple expiries**, solve *our* implied vol per
+  (strike, expiry) via the vectorized solver (`solve_iv_surface` / `plot_solved_iv_surface`), and
+  render the real solved IV surface plus a per-expiry smile. Also exposes vectorized batch pricing
+  over a whole strike grid. Degrades gracefully to the bundled offline sample chain (the
+  "Offline sample" checkbox or `OPTIONS_PRICING_OFFLINE=1`) so it never hard-fails without a network.
+
+Deployment to Render or Streamlit Community Cloud is documented in [DEPLOY.md](DEPLOY.md).
 
 ## Live market data
 
