@@ -55,7 +55,7 @@ class TickNormalizer:
         self.adapter: ExchangeAdapter = adapter
         self._bar_accumulators: dict[str, list[Trade]] = defaultdict(list)
 
-    def normalize_trade(self, raw: dict) -> Trade | None:
+    def normalize_trade(self, raw: dict | list) -> Trade | None:
         """Normalize a raw exchange message into a Trade via the adapter."""
         return self.adapter.normalize_trade(raw)
 

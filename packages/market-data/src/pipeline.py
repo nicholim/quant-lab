@@ -147,7 +147,7 @@ class Pipeline:
         await self.storage.disconnect()
         logger.info("Pipeline stopped")
 
-    async def _on_message(self, raw: dict) -> None:
+    async def _on_message(self, raw: dict | list) -> None:
         """Process incoming WebSocket message."""
         trade = self.normalizer.normalize_trade(raw)
         if trade is None:

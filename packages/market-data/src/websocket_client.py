@@ -35,11 +35,11 @@ class MarketDataClient:
         # the existing tests) behave exactly as before.
         self.adapter: ExchangeAdapter = adapter or BinanceAdapter(ws_url)
         self._ws: ClientConnection | None = None
-        self._callbacks: list[Callable[[dict], Awaitable[None]]] = []
+        self._callbacks: list[Callable[[dict | list], Awaitable[None]]] = []
         self._running = False
         self._retry_count = 0
 
-    def on_message(self, callback: Callable[[dict], Awaitable[None]]) -> None:
+    def on_message(self, callback: Callable[[dict | list], Awaitable[None]]) -> None:
         """Register an async callback for incoming messages."""
         self._callbacks.append(callback)
 

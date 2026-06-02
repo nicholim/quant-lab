@@ -55,11 +55,13 @@ class ExchangeAdapter(Protocol):
         """
         ...
 
-    def normalize_trade(self, raw: dict) -> Trade | None:
+    def normalize_trade(self, raw: dict | list) -> Trade | None:
         """Parse one raw WS message into a normalized :class:`Trade`.
 
-        Returns ``None`` for non-trade messages (heartbeats, subscription
-        confirmations) and for malformed payloads (logged, not raised).
+        Most venues send JSON objects (``dict``); some (Kraken v1) send JSON
+        arrays (``list``), so the raw message may be either. Returns ``None``
+        for non-trade messages (heartbeats, subscription confirmations) and for
+        malformed payloads (logged, not raised).
         """
         ...
 
@@ -92,8 +94,10 @@ class BinanceAdapter:
         # Streams are embedded in the URL path; nothing to send.
         return None
 
-    def normalize_trade(self, raw: dict) -> Trade | None:
+    def normalize_trade(self, raw: dict | list) -> Trade | None:
         # Only act on trade events; ignore any other event type if present.
+        if not isinstance(raw, dict):
+            return None
         if "e" in raw and raw["e"] != "trade":
             return None
         try:
@@ -159,7 +163,9 @@ class CoinbaseAdapter:
             ],
         }
 
-    def normalize_trade(self, raw: dict) -> Trade | None:
+    def normalize_trade(self, raw: dict | list) -> Trade | None:
+        if not isinstance(raw, dict):
+            return None
         if raw.get("type") not in self._TRADE_TYPES:
             return None
         try:
@@ -205,9 +211,222 @@ class CoinbaseAdapter:
         return dt
 
 
+class KrakenAdapter:
+    """Kraken WebSocket **v1** public ``trade`` feed (keyless public market data).
+
+    Connects to the single fixed endpoint ``wss://ws.kraken.com`` and selects
+    pairs via a subscribe message::
+
+        {"event": "subscribe",
+         "subscription": {"name": "trade"},
+         "pair": ["XBT/USD", "ETH/USD"]}
+
+    A trade update arrives as a JSON **array** (not an object), so the WebSocket
+    client's ``json.loads`` yields a list and ``normalize_trade`` receives it as
+    the ``raw`` argument. The shape is::
+
+        [
+          channelID,                       # int (deprecated)
+          [                                # array of trades in this update
+            ["price", "volume", "time", "side", "orderType", "misc"],
+            ...
+          ],
+          "trade",                         # channel name
+          "XBT/USD"                        # pair
+        ]
+
+    where each inner trade is ``[price, volume, time(sec.fraction), side,
+    orderType, misc]`` and ``side`` is ``"b"`` (buy) / ``"s"`` (sell). Kraken
+    documents ``side`` as the **taker/aggressor** side — i.e. who crossed the
+    spread — which matches the pipeline's Binance convention directly (NO flip
+    needed, unlike Coinbase's maker side).
+
+    Symbol mapping: the pipeline uses lowercase no-dash symbols (``btcusd``)
+    while Kraken pairs are slash-separated with ``XBT`` for bitcoin
+    (``XBT/USD``). The adapter maps ``btc``/``xbt`` <-> ``XBT`` on the way out
+    and back, so a configured ``btcusd`` round-trips to the same normalized
+    symbol the rest of the pipeline uses.
+
+    A Kraken trade *update* can batch several fills; ``normalize_trade`` returns
+    the **first** fill (the pipeline's one-message -> one-Trade contract). This
+    is an explicit, documented simplification: low-volume demo pairs almost
+    always send single-element batches, and the OHLCV roll-up is unaffected for
+    a single representative trade. (Batches could be expanded to multiple Trades
+    only by widening the adapter contract to return a list, which would touch
+    the normalizer/client; out of scope for this additive pass.)
+    """
+
+    name = "kraken"
+
+    def __init__(self, ws_base_url: str = "wss://ws.kraken.com") -> None:
+        self._ws_base_url = ws_base_url
+
+    def ws_url(self, symbols: list[str]) -> str:
+        # Single fixed endpoint; pairs are chosen via subscribe_payload.
+        return self._ws_base_url
+
+    def subscribe_payload(self, symbols: list[str]) -> dict | None:
+        return {
+            "event": "subscribe",
+            "subscription": {"name": "trade"},
+            "pair": [self._to_pair(s) for s in symbols],
+        }
+
+    def normalize_trade(self, raw: dict | list) -> Trade | None:
+        # Kraken trade updates are JSON arrays, not objects. Status/event
+        # messages (subscription acks, heartbeats, system status) ARE objects
+        # ({"event": ...}) -> ignored. A trade frame is
+        # [channelID, [[...trade...], ...], "trade", "PAIR"].
+        if not isinstance(raw, list) or len(raw) < 4:
+            return None
+        _channel_id, trades, channel_name, pair = raw[0], raw[1], raw[2], raw[3]
+        if channel_name != "trade":
+            return None
+        if not isinstance(trades, list) or not trades:
+            return None
+        try:
+            price_s, volume_s, time_s, side_code = trades[0][:4]
+            return Trade(
+                symbol=self._from_pair(pair),
+                price=float(price_s),
+                quantity=float(volume_s),
+                # Kraken 'side' is already the taker/aggressor side: b->buy, s->sell.
+                side="buy" if side_code == "b" else "sell",
+                timestamp=datetime.fromtimestamp(float(time_s), tz=UTC),
+                exchange=self.name,
+            )
+        except (KeyError, ValueError, IndexError, TypeError) as e:
+            logger.warning(f"Failed to normalize kraken trade: {e}")
+            return None
+
+    @staticmethod
+    def _to_pair(symbol: str) -> str:
+        """``btcusd`` / ``xbtusd`` -> ``XBT/USD`` (Kraken uses XBT for bitcoin)."""
+        s = symbol.strip().lower()
+        if "/" in s:
+            base, _, quote = s.partition("/")
+        elif len(s) > 3:
+            base, quote = s[:-3], s[-3:]
+        else:
+            base, quote = s, ""
+        if base == "btc":
+            base = "xbt"
+        pair = base.upper()
+        return f"{pair}/{quote.upper()}" if quote else pair
+
+    @staticmethod
+    def _from_pair(pair: str) -> str:
+        """``XBT/USD`` -> ``btcusd`` (matches the rest of the pipeline's symbols)."""
+        base, _, quote = pair.partition("/")
+        base = base.lower()
+        if base == "xbt":
+            base = "btc"
+        return f"{base}{quote.lower()}"
+
+
+class BitstampAdapter:
+    """Bitstamp WebSocket ``live_trades_<pair>`` channel (keyless public feed).
+
+    Connects to the single fixed endpoint ``wss://ws.bitstamp.net`` and selects
+    one channel per pair via a subscribe message (one per symbol, but the
+    pipeline sends a single payload; Bitstamp accepts subscribing to multiple
+    channels by sending multiple frames — here we send the first and document
+    that multi-symbol Bitstamp needs one subscribe per channel). The subscribe
+    shape is::
+
+        {"event": "bts:subscribe",
+         "data": {"channel": "live_trades_btcusd"}}
+
+    A trade arrives as::
+
+        {"event": "trade",
+         "channel": "live_trades_btcusd",
+         "data": {"id": 123, "timestamp": "1505558814",
+                  "amount": 0.01513062, "amount_str": "0.01513062",
+                  "price": 212.8, "price_str": "212.8",
+                  "type": 0, "microtimestamp": "1505558814000000",
+                  "buy_order_id": ..., "sell_order_id": ...}}
+
+    where ``type`` is the trade direction: ``0`` = buy, ``1`` = sell. Bitstamp
+    documents ``type`` as the side of the order that was executed against the
+    book, i.e. the **taker/aggressor** side, matching the pipeline's Binance
+    convention (NO flip). ASSUMPTION (documented): we treat ``type 0`` -> ``buy``
+    and ``type 1`` -> ``sell`` as the aggressor side; this is the widely-used
+    interpretation of the Bitstamp ``type`` field.
+
+    Symbol mapping: the channel suffix is the lowercase no-dash pair
+    (``btcusd``), which is already the pipeline's symbol form, so the
+    ``channel`` -> symbol round-trip is the identity (strip the
+    ``live_trades_`` prefix).
+
+    Timestamp: ``microtimestamp`` (microseconds since epoch, as a string) is
+    preferred for precision; falls back to ``timestamp`` (seconds) if absent.
+    """
+
+    name = "bitstamp"
+
+    def __init__(self, ws_base_url: str = "wss://ws.bitstamp.net") -> None:
+        self._ws_base_url = ws_base_url
+
+    def ws_url(self, symbols: list[str]) -> str:
+        # Single fixed endpoint; channels are chosen via subscribe_payload.
+        return self._ws_base_url
+
+    def subscribe_payload(self, symbols: list[str]) -> dict | None:
+        # Bitstamp subscribes one channel per frame. The client sends a single
+        # payload, so subscribe to the first symbol's channel; document that
+        # additional Bitstamp symbols need one subscribe frame each.
+        first = symbols[0] if symbols else ""
+        return {
+            "event": "bts:subscribe",
+            "data": {"channel": self._to_channel(first)},
+        }
+
+    def normalize_trade(self, raw: dict | list) -> Trade | None:
+        # Only "trade" events carry a fill. Subscription acks
+        # ("bts:subscription_succeeded"), heartbeats, and reconnect requests
+        # ("bts:request_reconnect") are ignored.
+        if not isinstance(raw, dict) or raw.get("event") != "trade":
+            return None
+        try:
+            data = raw["data"]
+            channel = raw.get("channel", "")
+            micro = data.get("microtimestamp")
+            if micro is not None:
+                ts = datetime.fromtimestamp(int(micro) / 1_000_000, tz=UTC)
+            else:
+                ts = datetime.fromtimestamp(int(data["timestamp"]), tz=UTC)
+            return Trade(
+                symbol=self._from_channel(channel),
+                price=float(data["price"]),
+                quantity=float(data["amount"]),
+                # data["type"]: 0 = buy, 1 = sell (taker/aggressor side).
+                side="buy" if int(data["type"]) == 0 else "sell",
+                timestamp=ts,
+                exchange=self.name,
+            )
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning(f"Failed to normalize bitstamp trade: {e}")
+            return None
+
+    @staticmethod
+    def _to_channel(symbol: str) -> str:
+        """``btcusd`` / ``btc-usd`` -> ``live_trades_btcusd``."""
+        s = symbol.strip().lower().replace("-", "").replace("/", "")
+        return f"live_trades_{s}"
+
+    @staticmethod
+    def _from_channel(channel: str) -> str:
+        """``live_trades_btcusd`` -> ``btcusd`` (already the pipeline form)."""
+        prefix = "live_trades_"
+        return channel[len(prefix) :] if channel.startswith(prefix) else channel.lower()
+
+
 _ADAPTERS: dict[str, type] = {
     "binance": BinanceAdapter,
     "coinbase": CoinbaseAdapter,
+    "kraken": KrakenAdapter,
+    "bitstamp": BitstampAdapter,
 }
 
 
