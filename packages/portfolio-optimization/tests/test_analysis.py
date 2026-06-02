@@ -83,10 +83,15 @@ class TestSelectedObjectives:
             ("risk_parity", ["risk_parity"]),
             ("sortino", ["sortino"]),
             ("min_cvar", ["min_cvar"]),
+            ("hrp", ["hrp"]),
         ],
     )
     def test_single_objectives(self, name, expected):
         assert _selected_objectives(name) == expected
+
+    def test_all_includes_hrp(self):
+        assert "hrp" in _selected_objectives("all")
+        assert analysis._OBJECTIVE_METHODS["hrp"] == "optimize_hrp"
 
 
 # --- compute_portfolio_returns ---
@@ -178,6 +183,55 @@ class TestRunAnalysis:
         )
         out = run_analysis(cfg)
         assert out["primary"] == "min_vol"
+
+    def test_run_hrp_objective_end_to_end(self, patched_downloads):
+        """--objective hrp routes through run_analysis and yields valid weights."""
+        cfg = AnalysisConfig(
+            tickers=patched_downloads,
+            objective="hrp",
+            num_portfolios=20,
+            monte_carlo_sims=50,
+            monte_carlo_days=20,
+            random_state=7,
+        )
+        out = run_analysis(cfg)
+        assert set(out["results"]) == {"hrp"}
+        res = out["results"]["hrp"]
+        # HRP is long-only and fully invested.
+        assert res.weights.shape == (len(patched_downloads),)
+        assert res.weights.sum() == pytest.approx(1.0)
+        assert (res.weights >= 0).all()
+        assert res.objective == "hrp"
+        # metrics + monte carlo flow through with hrp as the only/primary result.
+        assert set(out["metrics"]) == {"hrp"}
+        assert out["primary"] == "hrp"
+        assert out["mc_summary"]["portfolio"] == "hrp"
+
+    def test_run_all_includes_hrp_result(self, patched_downloads):
+        cfg = AnalysisConfig(
+            tickers=patched_downloads,
+            objective="all",
+            num_portfolios=20,
+            monte_carlo_sims=50,
+            monte_carlo_days=20,
+            random_state=7,
+        )
+        out = run_analysis(cfg)
+        assert "hrp" in out["results"]
+        assert out["results"]["hrp"].weights.sum() == pytest.approx(1.0)
+
+    def test_print_report_handles_hrp(self, patched_downloads, capsys):
+        cfg = AnalysisConfig(
+            tickers=patched_downloads,
+            objective="hrp",
+            num_portfolios=20,
+            monte_carlo_sims=50,
+            monte_carlo_days=20,
+            random_state=7,
+        )
+        print_report(run_analysis(cfg), cfg)
+        captured = capsys.readouterr().out
+        assert "HRP" in captured
 
 
 # --- offline end-to-end (bundled fixture, no monkeypatch) ---

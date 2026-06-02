@@ -2,6 +2,7 @@ websockets==15.0.1
 redis[hiredis]==5.2.1
 asyncpg==0.30.0
 psycopg2-binary==2.9.10
+duckdb==1.5.3
 python-dotenv==1.0.0
 aiohttp==3.11.11
 pandas==2.3.0

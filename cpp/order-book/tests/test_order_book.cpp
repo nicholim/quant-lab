@@ -36,6 +36,12 @@ Order market(uint64_t id, Side side, int qty, const std::string& sym = "TEST") {
     return make_order(id, sym, side, OrderType::MARKET, 0.0, qty);
 }
 
+// Apply a time-in-force to an order built by limit()/market().
+Order with_tif(Order o, TimeInForce tif) {
+    o.tif = tif;
+    return o;
+}
+
 // ---------------------------------------------------------------------------
 // Empty-book invariants
 // ---------------------------------------------------------------------------
@@ -376,6 +382,232 @@ TEST(Depth, VolumeAtPriceSpansBothSides) {
     EXPECT_EQ(book.get_volume_at_price(100.0), 10);
     EXPECT_EQ(book.get_volume_at_price(101.0), 30);
     EXPECT_EQ(book.get_volume_at_price(123.0), 0);   // empty level
+}
+
+// ---------------------------------------------------------------------------
+// Time-in-force: IOC (Immediate-Or-Cancel)
+// ---------------------------------------------------------------------------
+
+TEST(IOC, PartialFillThenCancelsRemainder) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 30));   // only 30 resting
+    // IOC buy for 50: fills 30 now, cancels the unfilled 20 (never rests).
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 100.0, 50), TimeInForce::IOC));
+
+    ASSERT_EQ(trades.size(), 1u);
+    EXPECT_EQ(trades[0].quantity, 30);
+    EXPECT_EQ(trades[0].buyer_order_id, 2u);
+    // Nothing rests on either side: ask fully consumed, IOC remainder cancelled.
+    EXPECT_EQ(book.bid_count(), 0);
+    EXPECT_EQ(book.ask_count(), 0);
+    EXPECT_FALSE(book.get_best_bid().has_value());
+}
+
+TEST(IOC, FullyFillsWhenLiquiditySuffices) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 50));
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 100.0, 20), TimeInForce::IOC));
+    ASSERT_EQ(trades.size(), 1u);
+    EXPECT_EQ(trades[0].quantity, 20);
+    // Resting ask keeps 30; IOC buy fully satisfied so nothing to cancel.
+    EXPECT_EQ(book.ask_count(), 1);
+    EXPECT_EQ(book.get_volume_at_price(100.0), 30);
+    EXPECT_EQ(book.bid_count(), 0);
+}
+
+TEST(IOC, NoLiquidityCancelsEntirely) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 101.0, 50));   // ask above the IOC price
+    // IOC buy @100 cannot cross the 101 ask -> no trades, nothing rests.
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 100.0, 50), TimeInForce::IOC));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.bid_count(), 0);
+    EXPECT_EQ(book.ask_count(), 1);   // resting ask untouched
+    EXPECT_EQ(book.get_volume_at_price(101.0), 50);
+}
+
+TEST(IOC, MarketIocOnEmptyBookCancels) {
+    OrderBook book("TEST");
+    auto trades = book.add_order(with_tif(market(1, Side::BUY, 25), TimeInForce::IOC));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.bid_count(), 0);
+    EXPECT_EQ(book.ask_count(), 0);
+}
+
+TEST(IOC, SweepsMultipleLevelsThenCancelsRemainder) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 10));
+    book.add_order(limit(2, Side::SELL, 101.0, 10));
+    // IOC buy @101 for 25: takes 10 + 10 = 20, cancels the last 5 (never rests).
+    auto trades = book.add_order(with_tif(limit(3, Side::BUY, 101.0, 25), TimeInForce::IOC));
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_EQ(trades[0].quantity, 10);
+    EXPECT_EQ(trades[1].quantity, 10);
+    EXPECT_EQ(book.ask_count(), 0);
+    EXPECT_EQ(book.bid_count(), 0);   // unfilled 5 cancelled, does not rest
+}
+
+// ---------------------------------------------------------------------------
+// Time-in-force: FOK (Fill-Or-Kill)
+// ---------------------------------------------------------------------------
+
+TEST(FOK, FillsCompletelyWhenLiquiditySuffices) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 30));
+    book.add_order(limit(2, Side::SELL, 101.0, 30));
+    // FOK buy @101 for 50: 60 available across the two levels -> fills fully.
+    auto trades = book.add_order(with_tif(limit(3, Side::BUY, 101.0, 50), TimeInForce::FOK));
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_EQ(trades[0].quantity, 30);
+    EXPECT_EQ(trades[1].quantity, 20);
+    // 10 left at the 101 level; FOK buy filled fully and never rests.
+    EXPECT_EQ(book.bid_count(), 0);
+    EXPECT_EQ(book.ask_count(), 1);
+    EXPECT_EQ(book.get_volume_at_price(101.0), 10);
+}
+
+TEST(FOK, ExactLiquidityFills) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 40));
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 100.0, 40), TimeInForce::FOK));
+    ASSERT_EQ(trades.size(), 1u);
+    EXPECT_EQ(trades[0].quantity, 40);
+    EXPECT_EQ(book.ask_count(), 0);
+    EXPECT_EQ(book.bid_count(), 0);
+}
+
+TEST(FOK, KillsWhenLiquidityInsufficientBookUnchanged) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 30));   // only 30 available
+    // FOK buy for 50 cannot be fully filled -> kill: no trades, ask untouched.
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 100.0, 50), TimeInForce::FOK));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.ask_count(), 1);
+    EXPECT_EQ(book.get_volume_at_price(100.0), 30);   // resting ask intact
+    EXPECT_EQ(book.bid_count(), 0);                   // FOK never rests
+}
+
+TEST(FOK, KillsWhenPriceCapsReachableLiquidity) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 30));
+    book.add_order(limit(2, Side::SELL, 105.0, 30));   // out of reach at price 100
+    // Only 30 reachable at/under 100, FOK wants 50 -> kill.
+    auto trades = book.add_order(with_tif(limit(3, Side::BUY, 100.0, 50), TimeInForce::FOK));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.ask_count(), 2);
+    EXPECT_EQ(book.get_volume_at_price(100.0), 30);
+    EXPECT_EQ(book.get_volume_at_price(105.0), 30);
+}
+
+TEST(FOK, SellSideKillsAndFills) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::BUY, 100.0, 20));
+    // Not enough bid liquidity for a 50-lot FOK sell -> kill.
+    auto killed = book.add_order(with_tif(limit(2, Side::SELL, 100.0, 50), TimeInForce::FOK));
+    EXPECT_TRUE(killed.empty());
+    EXPECT_EQ(book.bid_count(), 1);
+    EXPECT_EQ(book.ask_count(), 0);
+    // Now a FOK sell that fits exactly.
+    auto filled = book.add_order(with_tif(limit(3, Side::SELL, 100.0, 20), TimeInForce::FOK));
+    ASSERT_EQ(filled.size(), 1u);
+    EXPECT_EQ(filled[0].quantity, 20);
+    EXPECT_EQ(book.bid_count(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Time-in-force: POST_ONLY (maker-only)
+// ---------------------------------------------------------------------------
+
+TEST(PostOnly, RestsWhenItDoesNotCross) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 101.0, 10));
+    // Post-only buy @100 sits below the ask -> rests as a maker, no trades.
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 100.0, 10), TimeInForce::POST_ONLY));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.bid_count(), 1);
+    ASSERT_TRUE(book.get_best_bid().has_value());
+    EXPECT_DOUBLE_EQ(*book.get_best_bid(), 100.0);
+    EXPECT_EQ(book.get_volume_at_price(100.0), 10);
+}
+
+TEST(PostOnly, RejectedWhenItWouldCross) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 10));
+    // Post-only buy @100 would take the resting ask -> reject (maker-only).
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 100.0, 10), TimeInForce::POST_ONLY));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.bid_count(), 0);            // not rested
+    EXPECT_EQ(book.ask_count(), 1);            // resting ask untouched
+    EXPECT_EQ(book.get_volume_at_price(100.0), 10);
+}
+
+TEST(PostOnly, RejectedWhenAggressorPriceExceedsBestAsk) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::SELL, 100.0, 10));
+    // Willing to pay 105 -> clearly crosses -> rejected.
+    auto trades = book.add_order(with_tif(limit(2, Side::BUY, 105.0, 10), TimeInForce::POST_ONLY));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.bid_count(), 0);
+    EXPECT_EQ(book.ask_count(), 1);
+}
+
+TEST(PostOnly, SellRestsAboveBestBid) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::BUY, 100.0, 10));
+    // Post-only sell @101 is above the bid -> rests as a maker.
+    auto trades = book.add_order(with_tif(limit(2, Side::SELL, 101.0, 10), TimeInForce::POST_ONLY));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.ask_count(), 1);
+    ASSERT_TRUE(book.get_best_ask().has_value());
+    EXPECT_DOUBLE_EQ(*book.get_best_ask(), 101.0);
+}
+
+TEST(PostOnly, SellRejectedWhenItWouldCross) {
+    OrderBook book("TEST");
+    book.add_order(limit(1, Side::BUY, 100.0, 10));
+    // Post-only sell @100 would hit the resting bid -> rejected.
+    auto trades = book.add_order(with_tif(limit(2, Side::SELL, 100.0, 10), TimeInForce::POST_ONLY));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.ask_count(), 0);
+    EXPECT_EQ(book.bid_count(), 1);
+    EXPECT_EQ(book.get_volume_at_price(100.0), 10);
+}
+
+TEST(PostOnly, RestsOnEmptyBook) {
+    OrderBook book("TEST");
+    // No resting liquidity to cross -> post-only just rests.
+    auto trades = book.add_order(with_tif(limit(1, Side::BUY, 100.0, 10), TimeInForce::POST_ONLY));
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(book.bid_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Time-in-force: GTC default unchanged + engine routing of TIF orders
+// ---------------------------------------------------------------------------
+
+TEST(TimeInForce, DefaultIsGtcAndRestsLikeBefore) {
+    OrderBook book("TEST");
+    Order o = limit(1, Side::BUY, 100.0, 10);
+    EXPECT_EQ(o.tif, TimeInForce::GTC);   // default member initializer
+    book.add_order(o);
+    EXPECT_EQ(book.bid_count(), 1);       // GTC limit rests, behavior intact
+}
+
+TEST(TimeInForce, EngineRoutesIocAndFok) {
+    MatchingEngine engine;
+    engine.submit_order(limit(1, Side::SELL, 100.0, 30, "AAPL"));
+    // FOK for 50 against 30 -> killed.
+    auto fok = engine.submit_order(
+        with_tif(limit(2, Side::BUY, 100.0, 50, "AAPL"), TimeInForce::FOK));
+    EXPECT_TRUE(fok.empty());
+    EXPECT_EQ(engine.get_order_book("AAPL").ask_count(), 1);
+    // IOC for 50 against 30 -> fills 30, cancels 20.
+    auto ioc = engine.submit_order(
+        with_tif(limit(3, Side::BUY, 100.0, 50, "AAPL"), TimeInForce::IOC));
+    ASSERT_EQ(ioc.size(), 1u);
+    EXPECT_EQ(ioc[0].quantity, 30);
+    EXPECT_EQ(engine.get_order_book("AAPL").ask_count(), 0);
+    EXPECT_EQ(engine.get_order_book("AAPL").bid_count(), 0);
 }
 
 // ---------------------------------------------------------------------------

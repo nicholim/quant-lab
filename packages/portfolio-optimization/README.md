@@ -4,10 +4,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
+[![Tests](https://img.shields.io/badge/tests-234%20passing-brightgreen.svg)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-~96%25-brightgreen.svg)](pyproject.toml)
 
-A focused, dependency-light Modern Portfolio Theory optimizer: efficient frontier, six
-optimization objectives, flexible weight constraints, Monte Carlo risk projection, and a
-standalone performance-metrics module — usable as a library, a CLI, or a demo HTTP API.
+A focused, dependency-light Modern Portfolio Theory optimizer: a true solved efficient frontier,
+seven optimization objectives (incl. Hierarchical Risk Parity), Black–Litterman views, Ledoit–Wolf
+covariance shrinkage, flexible weight constraints, Monte Carlo risk projection, and a standalone
+performance-metrics module — usable as a library, a CLI, or a demo HTTP API.
 
 ### Why this exists
 
@@ -53,11 +56,14 @@ graph TD
 
 ## Features
 
-- **Efficient Frontier** — Generate and visualize the risk-return tradeoff across thousands of random portfolios
+- **Efficient Frontier** — both a Dirichlet random-portfolio **cloud** (`efficient_frontier`, for the scatter background) and the **true solved frontier** (`solved_efficient_frontier`), which sweeps the min-volatility-at-target-return solve across a return grid to trace the actual convex boundary
+- **Ledoit–Wolf covariance shrinkage** — opt-in (`calculate_returns(shrinkage="constant_correlation" | "identity")`, default **off** for parity), shrinks the noisy sample covariance toward a structured target with the analytically optimal intensity (numpy only, no scikit-learn)
+- **Black–Litterman expected returns** — opt-in, blends the market-implied equilibrium prior (reverse optimization `Π = δ Σ w_mkt`) with investor views `P·E[R] = Q` (uncertainty `Ω`, default `diag(τ P Σ Pᵀ)`) via the BL master formula. Use `black_litterman_returns(P, Q, ...)` for the posterior vector, or `optimize_black_litterman(P, Q, ...)` to max-Sharpe on the posterior. With no views the posterior equals the equilibrium prior (numpy only, no PyPortfolioOpt/cvxpy)
 - **Multiple optimization objectives:**
   - **Max Sharpe** — tangency portfolio maximizing risk-adjusted return (SLSQP)
   - **Min Volatility** — global minimum variance portfolio
   - **Risk Parity** — equalizes each asset's risk contribution
+  - **Hierarchical Risk Parity (HRP)** — López de Prado's solver-free, correlation-clustering allocation (`optimize_hrp()`)
   - **Max Sortino** — maximizes return per unit of downside deviation
   - **Min CVaR** — minimizes historical expected shortfall via the Rockafellar–Uryasev linear program
   - **Target-based** — max return for a target volatility, or min volatility for a target return
@@ -85,22 +91,25 @@ big frameworks, but stays small, readable, and dependency-light.
 |---|:---:|:---:|:---:|:---:|:---:|
 | Max Sharpe / min volatility | Yes | Yes | Yes | Yes | DIY |
 | Risk parity | Yes (equal risk contribution) | HRP only | Yes (RP + HRP/HERC) | Yes (RP + clustering) | DIY |
+| Hierarchical Risk Parity (HRP) | Yes (solver-free, `optimize_hrp`) | Yes | Yes (HRP + HERC) | Yes | DIY |
 | Sortino / semivariance | Yes (max Sortino) | Yes (semivariance frontier) | Yes | Yes | DIY |
 | CVaR / expected shortfall | Yes (Rockafellar–Uryasev LP) | Yes (`EfficientCVaR`) | Yes (many tail measures) | Yes | DIY |
 | Per-asset & group weight bounds, shorting | Yes | Yes | Yes | Yes | DIY |
-| Black–Litterman / factor / clustering models | No | Black–Litterman | Extensive | Extensive (sklearn estimators) | DIY |
+| Black–Litterman / factor / clustering models | Black–Litterman + HRP | Black–Litterman | Extensive | Extensive (sklearn estimators) | DIY |
 | Walk-forward / purged cross-validation | No | No | Limited | Yes (its headline feature) | No |
 | Monte Carlo VaR/CVaR projection | Yes (GBM) | No | No | No | No |
 | Solver stack | scipy `SLSQP` + `linprog` | cvxpy | cvxpy | cvxpy | (is the solver) |
 | Core dependencies | numpy/pandas/scipy | + cvxpy | + cvxpy | + sklearn/cvxpy | cvxpy |
 
-**What this engine does well:** a compact, readable MPT reference — six objectives, flexible
-constraints, an empirical-CVaR LP, and a self-contained `metrics` + Monte Carlo layer with no
-heavy solver dependency. The efficient frontier here is a **Dirichlet random-portfolio cloud**
-for visualization, not a swept convex frontier.
+**What this engine does well:** a compact, readable MPT reference — seven objectives (incl.
+Hierarchical Risk Parity), flexible constraints, an empirical-CVaR LP, Black–Litterman views,
+opt-in Ledoit–Wolf shrinkage, and a self-contained `metrics` + Monte Carlo layer with no heavy
+solver dependency. It draws **both** a Dirichlet random-portfolio cloud (`efficient_frontier`,
+for the scatter background) **and** the true swept convex boundary (`solved_efficient_frontier`,
+min-vol-at-target-return across a return grid).
 
-**What it intentionally does not do:** Black–Litterman, factor models, hierarchical/clustering
-allocation, machine-learning estimators, or leakage-safe cross-validation. For those, reach for
+**What it intentionally does not do:** factor models, machine-learning covariance/return
+estimators, or leakage-safe cross-validation. For those, reach for
 [`riskfolio-lib`](https://github.com/dcajasn/Riskfolio-Lib) or
 [`skfolio`](https://github.com/skfolio/skfolio); for a battle-tested classical toolkit, see
 [`PyPortfolioOpt`](https://github.com/robertmartin8/PyPortfolioOpt); to hand-roll arbitrary convex
@@ -132,13 +141,16 @@ pip install -r requirements.txt
 pip install -e .            # makes the package importable from anywhere
 
 python main.py              # full analysis on the default tickers (needs network)
-python examples/quickstart_offline.py   # runnable end-to-end, no network
+python examples/quickstart_offline.py     # runnable end-to-end, no network
+python examples/black_litterman_demo.py    # prior → view → posterior → weights, no network
 ```
 
 The offline example ([`examples/quickstart_offline.py`](examples/quickstart_offline.py)) injects
 a synthetic returns matrix and walks the full workflow — all six objectives, the efficient
 frontier, the metrics module, and a Monte Carlo VaR/CVaR projection — without any Yahoo Finance
-call, so it always reproduces.
+call, so it always reproduces. The Black–Litterman example
+([`examples/black_litterman_demo.py`](examples/black_litterman_demo.py)) shows the full
+prior → bullish-view → posterior → optimized-weights flow (also offline).
 
 ## Command-line usage
 
@@ -157,9 +169,15 @@ python main.py \
 python main.py --config my_run.json
 ```
 
-Key flags: `--objective {sharpe,min_vol,risk_parity,sortino,min_cvar,both,all}`,
+Key flags: `--objective {sharpe,min_vol,risk_parity,sortino,min_cvar,hrp,both,all}`,
 `--benchmark TICKER`, `--export-format {csv,json,both,none}`, `--output-dir`,
 `--num-portfolios`, `--risk-free-rate`, `--random-state`, `--no-plots`, `--offline`.
+
+> **Black–Litterman is not a `--objective`.** It needs investor *views* (a pick
+> matrix `P` and target returns `Q`), which don't fit the flat CLI. Use the library
+> API (`optimize_black_litterman(P, Q, ...)`), the FastAPI `POST /optimize/black-litterman`
+> endpoint, or the runnable [`examples/black_litterman_demo.py`](examples/black_litterman_demo.py)
+> (prior → view → posterior → weights, fully offline).
 Exports are written to `--output-dir` (default `results/`, gitignored).
 
 ### Resilient data layer (cache / retry / offline)
@@ -233,15 +251,34 @@ optimizer = PortfolioOptimizer(
 optimizer.fetch_data()
 optimizer.calculate_returns()
 
-# Generate efficient frontier
+# Generate the random-portfolio cloud (scatter background)
 frontier = optimizer.efficient_frontier(num_portfolios=5000)
+
+# ...or the TRUE solved frontier (min-vol per target return, sorted by return)
+solved = optimizer.solved_efficient_frontier(n_points=50)
+
+# Optional: Ledoit-Wolf covariance shrinkage (default off; off == byte-identical
+# to the plain sample covariance, preserving metrics/backtester parity)
+optimizer.calculate_returns(shrinkage="constant_correlation")
+print(optimizer.shrinkage_intensity)  # chosen intensity in [0, 1]
 
 # Find optimal portfolios — every objective shares the same constraint kwargs
 max_sharpe = optimizer.optimize_sharpe()
 min_vol = optimizer.optimize_min_volatility()
 risk_parity = optimizer.optimize_risk_parity()
+hrp = optimizer.optimize_hrp()  # Hierarchical Risk Parity (no solver, long-only)
 sortino = optimizer.optimize_sortino()
 min_cvar = optimizer.optimize_min_cvar(confidence=0.95)
+
+# Black-Litterman: blend the equilibrium prior with investor views.
+# A bullish absolute view that asset 0 returns 15% annually:
+import numpy as np
+P = np.array([[1.0, 0.0, 0.0]])  # pick matrix: one row per view
+Q = np.array([0.15])             # view returns
+posterior = optimizer.black_litterman_returns(P, Q)  # pandas Series per ticker
+bl = optimizer.optimize_black_litterman(P, Q)        # max-Sharpe on the posterior
+# With no views, the posterior equals the equilibrium prior Pi = delta * Sigma @ w_mkt
+prior = optimizer.black_litterman_returns()          # equal-weight neutral prior
 
 # Flexible constraints: cap AAPL at 30%, limit a tech group to 50%, allow shorting
 constrained = optimizer.optimize_sharpe(
@@ -283,10 +320,12 @@ portfolio-optimization-engine/
 ├── requirements-api.txt    # Extra deps for the optional FastAPI demo (adds to requirements.txt)
 ├── api/app.py              # Thin FastAPI demo wrapper (calls the public API; no logic duplicated)
 ├── render.yaml             # Render Blueprint for the FastAPI demo
-├── examples/               # Runnable workflows (quickstart_offline.py — no network)
-├── tests/                  # pytest suite (147 tests, ~95% coverage)
+├── examples/               # Runnable workflows (quickstart_offline.py, black_litterman_demo.py — no network)
+├── tests/                  # pytest suite (234 tests, ~96% coverage)
 └── portfolio_optimization_engine/   # importable package
     ├── optimizer.py         # PortfolioOptimizer (frontier, all objectives, flexible constraints)
+    ├── covariance.py        # Ledoit-Wolf shrinkage estimators (opt-in, numpy-only)
+    ├── black_litterman.py   # Black-Litterman prior + posterior (opt-in, numpy-only)
     ├── data_cache.py        # On-disk price cache (avoids repeat yfinance downloads)
     ├── monte_carlo.py       # MonteCarloSimulator (GBM, VaR, CVaR)
     ├── metrics.py           # Standalone performance metrics (CAGR, drawdown, Sortino, Calmar, …)
@@ -309,8 +348,14 @@ Endpoints:
 | GET    | `/health`     | Liveness probe (Render health check).                         |
 | GET    | `/objectives` | List supported objectives.                                    |
 | POST   | `/optimize`   | Body: `{tickers, returns (T×n daily), objective, risk_free_rate}` → weights + metrics. |
+| POST   | `/optimize/black-litterman` | Body: `{tickers, returns, views[], market_weights?, tau, risk_aversion}` → weights + posterior/prior returns. |
 
-Supported objectives: `sharpe`, `min_volatility`, `risk_parity`, `sortino`, `min_cvar`.
+Supported `/optimize` objectives: `sharpe`, `min_volatility`, `risk_parity`,
+`sortino`, `min_cvar`, `hrp`. **Black–Litterman** has its own endpoint because it
+takes investor *views*: each view is `{assets: {ticker: loading}, q, confidence?}`
+(absolute or relative). With no views the optimization runs on the market-implied
+equilibrium prior; the response echoes both the `prior_returns` and the
+view-adjusted `posterior_returns`.
 
 Run locally:
 
@@ -333,7 +378,7 @@ Deploy on Render (Blueprint — `render.yaml` is committed):
 
 ```bash
 pip install -e ".[test]"
-pytest                       # 147 tests, branch coverage gated at 90% (~95% actual)
+pytest                       # 234 tests, branch coverage gated at 90% (~96% actual)
 ruff check . && ruff format --check .
 ```
 

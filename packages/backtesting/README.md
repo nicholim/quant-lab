@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
+[![Tests](https://img.shields.io/badge/tests-175%20passing-brightgreen.svg)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-~89%25-brightgreen.svg)](pyproject.toml)
 
 **A multi-asset, event-driven backtester that fills at the next bar's open, persists every run to DuckDB for SQL comparison, and runs walk-forward MPT-optimized portfolios out-of-sample.**
 
@@ -69,7 +71,7 @@ to the engine's shared `metrics` module) and the run is persisted to DuckDB.
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| Data handler | `src/data_handler.py` | `DataHandler` ABC + `YFinanceDataHandler` (DuckDB-cached OHLCV, no look-ahead reads) |
+| Data handler | `src/data_handler.py` | `DataHandler` ABC + `YFinanceDataHandler` (DuckDB-cached OHLCV), `CSVDataHandler` and `DataFrameDataHandler` (offline/custom/intraday, no yfinance); all share identical no-look-ahead bar/event reads |
 | Events | `src/events.py` | Typed dataclasses: `MarketEvent`, `SignalEvent`, `OrderEvent`, `FillEvent` |
 | Strategy | `src/strategy.py` | `Strategy` ABC + SMA, mean-reversion, momentum, cross-sectional, MPT rebalance |
 | Sizing | `src/sizing.py` | `Sizer` ABC: fixed-fractional, %-equity, risk-based, target-weight |
@@ -84,7 +86,7 @@ to the engine's shared `metrics` module) and the run is persisted to DuckDB.
 - **Event-Driven Architecture** — Decoupled components communicating via typed events (Market, Signal, Order, Fill)
 - **DuckDB Data Store** — Local caching of market data (instant re-runs) + persistent backtest results with SQL query interface
 - **Strategy Library** — Built-in SMA crossover, z-score mean reversion, momentum, and an **MPT walk-forward rebalancer** powered by the [portfolio-optimization-engine](../portfolio-optimization-engine)
-- **MPT Integration** — `OptimizationRebalanceStrategy` re-optimizes target weights (max-Sharpe / min-vol / min-CVaR / risk-parity) on a rolling window and executes them net of costs — an out-of-sample test of optimized portfolios
+- **MPT Integration** — `OptimizationRebalanceStrategy` re-optimizes target weights on a rolling window and executes them net of costs — an out-of-sample test of optimized portfolios. Supports seven objectives: `sharpe`, `min_vol`, `min_cvar`, `risk_parity`, `sortino`, and the target-constrained `max_return_target_vol` / `min_vol_target_return` (the last two take a `target` annual vol cap / minimum annual return)
 - **Realistic fills** — Orders fill at the **next bar's open**, not the signal bar's close (avoids the same-bar fill that overstates results)
 - **Shared metrics** — Sharpe/Sortino/drawdown come from the engine's `metrics` module, so this backtester and the optimizer report identical numbers for the same return series
 - **Transaction Costs** — Configurable slippage model and percentage-based commissions
@@ -98,12 +100,13 @@ to the engine's shared `metrics` module) and the run is persisted to DuckDB.
 - **Visualization** — Static matplotlib (equity curve, drawdown, monthly heatmap) plus **interactive Bokeh** charts (pan/zoom/hover) exported to standalone HTML
 - **Multi-timeframe** — Strategies can read resampled higher-timeframe (weekly/monthly) bars without look-ahead
 - **Margin / leverage** — Optional leverage cap with buying-power-constrained sizing and daily margin interest on borrowed cash
+- **Short selling (opt-in)** — `Portfolio(allow_short=True)` lets positions go negative: selling beyond flat opens a short (credits cash), buying covers it (debits cash). Positions carry signed quantities, mark to market inversely, get short-side stop/take-profit/trailing exits, and round-trip P&L is matched with signed FIFO (sold-high/covered-low is a profit). Defaults **off** — long-only is byte-identical to before
 
 ## Technical Highlights
 
 - **Clean event-driven design** — Typed dataclass events (Market → Signal → Order → Fill) with ABC-based strategy/execution interfaces for easy extension
 - **Round-trip P&L matching** — Win rate and profit factor computed from actual FIFO-matched buy/sell pairs, not raw trade counts
-- **Long-only enforcement** — Portfolio rejects sell signals when flat, preventing accidental naked short positions
+- **Long-only by default, short selling opt-in** — Portfolio rejects sell signals when flat (no accidental naked shorts); set `allow_short=True` to enable signed positions, short cash accounting, short-side exits, and signed-FIFO round-trip P&L
 - **DuckDB-backed caching** — First run downloads from yfinance, subsequent runs served instantly from local DuckDB store; no wasted API calls
 - **Resilient data fetch** — Beneath the DuckDB cache, `src/market_data.py` wraps yfinance with retry + exponential backoff on transient/rate-limit errors and a clear `MarketDataError`. An OFFLINE escape hatch (`offline=True` arg or `BACKTESTING_OFFLINE=1`) serves a bundled deterministic OHLCV fixture (`src/data/sample_ohlcv.csv`) so demos never hard-fail on cloud egress
 - **SQL query interface** — Cross-strategy comparison, slippage analysis, and custom queries against all historical backtest runs via `store.query(sql)`
@@ -131,6 +134,41 @@ pip install -r requirements.txt   # also installs the sibling optimization engin
 python main.py        # run the example strategies (CLI)
 python dashboard.py   # OR launch the web UI at http://127.0.0.1:8050
 ```
+
+### Configurable single backtest (CLI flags)
+
+Run with no arguments for the multi-strategy demo, or pass `--strategy` to run a
+single configurable backtest. All flags default to the prior online, long-only
+behavior:
+
+```bash
+# Long/short SMA crossover on the bundled offline fixture (no network):
+python main.py --strategy sma --allow-short --offline --tickers AAA BBB
+
+# Run on custom CSV data (one <TICKER>.csv per ticker in a directory):
+python main.py --strategy sma --data-csv ./mydata --tickers AAPL MSFT
+
+# A single combined CSV with a 'symbol' column:
+python main.py --strategy sma --data-csv ./all.csv --csv-combined --tickers AAPL MSFT
+
+# Walk-forward Hierarchical Risk Parity (HRP) rebalancing:
+python main.py --strategy optimize --objective hrp --offline --tickers AAA BBB CCC
+```
+
+| Flag | Effect |
+|------|--------|
+| `--strategy {sma,mean_reversion,momentum,optimize}` | Run one strategy instead of the demo |
+| `--allow-short` | Enable native short selling (default off = long-only) |
+| `--data-source {yfinance,csv}` / `--data-csv PATH` | Load OHLCV from CSV instead of yfinance |
+| `--csv-combined` | Treat `--data-csv` as one combined file with a `symbol` column |
+| `--offline` | Use the bundled deterministic OHLCV fixture (= `BACKTESTING_OFFLINE=1`) |
+| `--objective` | Optimizer objective for `--strategy optimize` (incl. `hrp`) |
+| `--tickers`, `--start`, `--end`, `--capital`, `--lookback`, `--rebalance-freq`, `--target` | Universe / window knobs |
+
+**CSV convention:** each file needs OHLC columns (case-insensitive; `Volume`
+optional, defaulted to 0) and a `Date`/`Datetime`/`Timestamp`/`Time` column (or a
+parseable first column). Rows are normalized to the engine's canonical OHLCV
+shape, so CSV runs are bar-identical to yfinance runs.
 
 ## Web dashboard (GUI)
 
@@ -211,6 +249,7 @@ tool's **open-source** edition as of mid-2026.
 | Fills at next bar's open | Yes (built-in) | Configurable (cheat-on-open off) | N/A (vectorized) | Next-bar open | Next-bar |
 | Resting LIMIT/STOP + OCO brackets | Yes | Yes | PRO-only expanded orders | Limited | Yes |
 | Per-position trailing/protective exits | Yes | Yes | Path-dependent stops are PRO | Basic SL/TP | Yes |
+| Short selling | **Yes (opt-in, signed FIFO)** | Yes | Yes | Yes | Yes |
 | Slippage + commission models | Yes (first-class) | Yes | Basic (fees/slippage scalars) | Basic | Yes (slippage + cost models) |
 | Walk-forward MPT optimization | **Yes** (calls optimizer engine) | DIY | DIY | DIY | DIY (Pyfolio/empyrical) |
 | Result persistence + SQL query | **Yes (DuckDB)** | No | No | No | Ingest bundles (no run DB) |
@@ -282,6 +321,43 @@ analytics.generate_report()
 analytics.plot_equity_curve()
 ```
 
+### Offline / custom data (no yfinance)
+
+Both handlers produce byte-identical bar/event semantics to `YFinanceDataHandler`
+(same windowing, no-look-ahead resampling, next-open fills), so strategies,
+sizing, execution and analytics work unchanged — they just remove the hard
+yfinance dependency for offline, custom or intraday data.
+
+```python
+from src.data_handler import CSVDataHandler, DataFrameDataHandler
+
+# In-memory frames you already have ({ticker: OHLCV DataFrame}).
+# OHLC columns case-insensitive; Volume optional; DatetimeIndex or a
+# Date/Datetime/Timestamp column. start/end inferred from the data if omitted.
+data = DataFrameDataHandler({"AAPL": df_aapl, "MSFT": df_msft})
+
+# One CSV per ticker in a directory: <dir>/AAPL.csv, <dir>/MSFT.csv (default).
+data = CSVDataHandler(["AAPL", "MSFT"], "data/csv/", start_date="2020-01-01")
+data.fetch()
+
+# Or a single combined file with a `symbol` (or `ticker`) column:
+data = CSVDataHandler(["AAPL", "MSFT"], "data/all.csv", per_ticker=False)
+data.fetch()
+```
+
+`OptimizationRebalanceStrategy` supports objectives `sharpe`, `min_vol`,
+`min_cvar`, `risk_parity`, `sortino`, `max_return_target_vol` and
+`min_vol_target_return`. The last two take a `target` (annual volatility cap, or
+minimum annual return respectively):
+
+```python
+from src.strategy import OptimizationRebalanceStrategy
+
+strat = OptimizationRebalanceStrategy(
+    ["AAPL", "MSFT", "JPM"], objective="max_return_target_vol", target=0.20
+)
+```
+
 ### SQL Queries on Backtest History
 
 ```python
@@ -313,7 +389,8 @@ strategy = OptimizationRebalanceStrategy(
     tickers,
     lookback=252,        # trailing window for optimization
     rebalance_freq=21,   # ~monthly
-    objective="sharpe",  # "sharpe" | "min_vol" | "min_cvar" | "risk_parity"
+    objective="sharpe",  # sharpe | min_vol | min_cvar | risk_parity | sortino | hrp |
+                         # max_return_target_vol | min_vol_target_return (last two need target=)
 )
 # ...wire into Backtest exactly like any other strategy.
 ```
@@ -340,6 +417,23 @@ portfolio = Portfolio(
 Sizers: `FixedFractionalSizer`, `PercentOfEquitySizer`, `RiskBasedSizer`,
 `TargetWeightSizer`. Protective exits are evaluated each bar on the close and
 fill at the next open like any order.
+
+### Short selling (opt-in)
+
+```python
+portfolio = Portfolio(initial_capital=100_000, allow_short=True)
+```
+
+With `allow_short=True` a SELL beyond a flat/long position opens a **short**
+(credits the sale proceeds to cash) and a BUY covers it (debits cash). Positions
+carry signed quantities, so equity `= cash + Σ qty*price` marks a short to market
+inversely (price falls → short gains). Protective exits invert for shorts
+(stop-loss fires when price *rises* above entry, take-profit when it *falls*),
+and `TargetWeightSizer` honors negative `target_weight`s. Round-trip P&L is then
+matched with **signed FIFO** — a short round trip (sell high, cover low) is a
+profit. The default `allow_short=False` keeps the engine long-only and
+byte-identical to prior versions: naked sells are clipped to flat and a SELL
+with no open long is dropped from trade analytics.
 
 ### Parameter Optimization + Heatmap
 
@@ -413,7 +507,7 @@ backtesting-framework/
 └── src/
     ├── datastore.py        # DuckDB store: OHLCV cache, result persistence, SQL queries
     ├── events.py           # Typed event classes (Market, Signal, Order, Fill)
-    ├── data_handler.py     # DataHandler ABC + YFinanceDataHandler (DuckDB-backed)
+    ├── data_handler.py     # DataHandler ABC + YFinance/CSV/DataFrame handlers (shared no-look-ahead reads)
     ├── strategy.py         # Strategy ABC + SMA, Mean Reversion, Momentum, CrossSectional, OptimizationRebalance
     ├── sizing.py           # Sizer ABC + FixedFractional/PercentOfEquity/RiskBased/TargetWeight
     ├── portfolio.py        # Position/cash tracking; delegates sizing to a Sizer

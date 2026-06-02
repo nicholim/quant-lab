@@ -16,13 +16,16 @@ from .metrics import compute_metrics
 from .monte_carlo import MonteCarloSimulator
 from .optimizer import PortfolioOptimizer
 
-# objective name -> method to call on the optimizer
+# objective name -> method to call on the optimizer.
+# All entries are zero-arg-callable (use the injected cov/returns), so they slot
+# into ``run_analysis`` uniformly. HRP is solver-free but obeys the same contract.
 _OBJECTIVE_METHODS = {
     "max_sharpe": "optimize_sharpe",
     "min_vol": "optimize_min_volatility",
     "risk_parity": "optimize_risk_parity",
     "sortino": "optimize_sortino",
     "min_cvar": "optimize_min_cvar",
+    "hrp": "optimize_hrp",
 }
 
 
@@ -37,6 +40,7 @@ def _selected_objectives(objective: str) -> list[str]:
         "risk_parity": ["risk_parity"],
         "sortino": ["sortino"],
         "min_cvar": ["min_cvar"],
+        "hrp": ["hrp"],
     }[objective]
 
 

@@ -39,3 +39,32 @@ if(BUILD_TESTING)
     include(GoogleTest)
     gtest_discover_tests(orderbook_tests)
 endif()
+
+# ---------------------------------------------------------------------------
+# Python bindings: pybind11 via FetchContent (no system/pip install required).
+# Produces an importable extension module `_orderbook` placed into
+# python/orderbook/ so `import orderbook` works from the python/ dir.
+# Guarded by BUILD_PYTHON_BINDINGS so the C++ demo + GoogleTest targets still
+# build if a Python interpreter/headers aren't available.
+# ---------------------------------------------------------------------------
+option(BUILD_PYTHON_BINDINGS "Build the pybind11 Python module" ON)
+
+if(BUILD_PYTHON_BINDINGS)
+    include(FetchContent)
+    FetchContent_Declare(
+        pybind11
+        GIT_REPOSITORY https://github.com/pybind/pybind11.git
+        GIT_TAG v2.13.6
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(pybind11)
+
+    pybind11_add_module(_orderbook src/bindings.cpp src/order_book.cpp src/matching_engine.cpp)
+    target_include_directories(_orderbook PRIVATE include)
+
+    # Drop the compiled module next to the Python re-export package so
+    # `import orderbook` resolves it without any install step.
+    set_target_properties(_orderbook PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/python/orderbook
+    )
+endif()

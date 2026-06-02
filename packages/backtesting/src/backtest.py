@@ -77,7 +77,12 @@ class Backtest:
         equity_df = self.portfolio.get_equity_df()
         trade_df = self.portfolio.get_trade_df()
         benchmark_returns = self._fetch_benchmark_returns()
-        analytics = PerformanceAnalytics(equity_df, trade_df, benchmark_returns=benchmark_returns)
+        analytics = PerformanceAnalytics(
+            equity_df,
+            trade_df,
+            benchmark_returns=benchmark_returns,
+            allow_short=getattr(self.portfolio, "allow_short", False),
+        )
 
         # Persist results to DuckDB
         if self._store and self.strategy_name:

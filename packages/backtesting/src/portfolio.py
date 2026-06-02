@@ -26,11 +26,18 @@ class Portfolio:
         trailing_stop_pct: float | None = None,
         max_leverage: float | None = None,
         margin_rate: float = 0.0,
+        allow_short: bool = False,
     ):
         self.initial_capital = initial_capital
         self.position_size_pct = position_size_pct
         self.sizer = sizer or FixedFractionalSizer(position_size_pct)
         self._target_weight_sizer = TargetWeightSizer()
+        # OPT-IN short selling. Default False = long-only (existing behavior,
+        # byte-identical): the Sizer clips SELLs to an open long and never opens
+        # a short, and process_fill never sees a sign flip. When True, selling
+        # beyond flat opens a short (credits cash) and buying covers it (debits
+        # cash); positions carry signed quantities and mark to market inversely.
+        self.allow_short = allow_short
         # Protective-exit thresholds (fractions, e.g. 0.1 = 10%). None disables.
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
@@ -92,11 +99,21 @@ class Portfolio:
         return sizer.size(signal, self, data)
 
     def process_fill(self, fill: FillEvent) -> None:
-        """Update positions and cash from a fill."""
+        """Update positions and cash from a fill.
+
+        Cash accounting is direction-mechanical and works for signed positions:
+        a BUY always debits ``price*qty + commission`` (covering a short returns
+        the borrowed shares and debits cash); a SELL always credits
+        ``price*qty - commission`` (a short sale credits the proceeds). Equity is
+        ``cash + Σ signed_qty*price``, so a short (negative qty) marks to market
+        inversely without special-casing.
+        """
         current = self.positions.get(fill.symbol, 0)
         cost = fill.price * fill.quantity + fill.commission
 
-        if fill.direction == Direction.BUY:
+        if self.allow_short:
+            new_qty = self._apply_signed_fill(fill, current, cost)
+        elif fill.direction == Direction.BUY:
             new_qty = current + fill.quantity
             self.positions[fill.symbol] = new_qty
             self.cash -= cost
@@ -129,6 +146,48 @@ class Portfolio:
             }
         )
 
+    def _apply_signed_fill(self, fill: FillEvent, current: int, cost: float) -> int:
+        """Signed position/cash/entry update used when ``allow_short`` is on.
+
+        Handles all transitions for a signed position: opening/extending (a BUY
+        from flat/long, or a SELL from flat/short), reducing toward flat, and
+        flipping through zero (e.g. a SELL larger than an open long closes the
+        long and opens a short for the remainder). Entry price is the
+        magnitude-weighted average cost of the OPEN side and is reset to the
+        fill price on a flip; protective tracking is dropped when flat.
+        """
+        signed = fill.quantity if fill.direction == Direction.BUY else -fill.quantity
+        new_qty = current + signed
+
+        if fill.direction == Direction.BUY:
+            self.cash -= cost
+        else:
+            self.cash += fill.price * fill.quantity - fill.commission
+
+        self.positions[fill.symbol] = new_qty
+        same_side = (current > 0) == (new_qty > 0)
+
+        if new_qty == 0:  # closed to flat
+            self._entry_price.pop(fill.symbol, None)
+            self._high_water.pop(fill.symbol, None)
+        elif current == 0:  # opened from flat
+            self._entry_price[fill.symbol] = fill.price
+            self._high_water[fill.symbol] = fill.price
+        elif same_side and abs(new_qty) > abs(current):
+            # Same side, magnitude increased -> magnitude-weighted-average entry.
+            prev_entry = self._entry_price.get(fill.symbol, fill.price)
+            self._entry_price[fill.symbol] = (
+                prev_entry * abs(current) + fill.price * fill.quantity
+            ) / abs(new_qty)
+        elif same_side:
+            # Reduced toward flat without crossing -> keep the open-side entry.
+            pass
+        else:
+            # Flipped through zero: the remainder opens a fresh position.
+            self._entry_price[fill.symbol] = fill.price
+            self._high_water[fill.symbol] = fill.price
+        return new_qty
+
     def check_exits(self, data: DataHandler, timestamp) -> list[OrderEvent]:
         """Return market SELL orders for long positions that hit a protective exit.
 
@@ -142,7 +201,9 @@ class Portfolio:
 
         orders: list[OrderEvent] = []
         for symbol, qty in list(self.positions.items()):
-            if qty <= 0:
+            if qty == 0:
+                continue
+            if qty < 0 and not self.allow_short:
                 continue
             entry = self._entry_price.get(symbol)
             if entry is None:
@@ -151,22 +212,39 @@ class Portfolio:
             if price <= 0:
                 continue
 
-            high_water = max(self._high_water.get(symbol, entry), price)
-            self._high_water[symbol] = high_water
-
-            triggered = (
-                (self.stop_loss_pct and price <= entry * (1 - self.stop_loss_pct))
-                or (self.take_profit_pct and price >= entry * (1 + self.take_profit_pct))
-                or (self.trailing_stop_pct and price <= high_water * (1 - self.trailing_stop_pct))
-            )
+            if qty > 0:
+                high_water = max(self._high_water.get(symbol, entry), price)
+                self._high_water[symbol] = high_water
+                triggered = (
+                    (self.stop_loss_pct and price <= entry * (1 - self.stop_loss_pct))
+                    or (self.take_profit_pct and price >= entry * (1 + self.take_profit_pct))
+                    or (
+                        self.trailing_stop_pct
+                        and price <= high_water * (1 - self.trailing_stop_pct)
+                    )
+                )
+                exit_direction = Direction.SELL
+            else:
+                # Short: stop-loss when price RISES above entry, take-profit when
+                # it FALLS below entry, trailing stop off the lowest price seen.
+                low_water = min(self._high_water.get(symbol, entry), price)
+                self._high_water[symbol] = low_water
+                triggered = (
+                    (self.stop_loss_pct and price >= entry * (1 + self.stop_loss_pct))
+                    or (self.take_profit_pct and price <= entry * (1 - self.take_profit_pct))
+                    or (
+                        self.trailing_stop_pct and price >= low_water * (1 + self.trailing_stop_pct)
+                    )
+                )
+                exit_direction = Direction.BUY
             if triggered:
                 orders.append(
                     OrderEvent(
                         timestamp=timestamp,
                         symbol=symbol,
-                        quantity=qty,
+                        quantity=abs(qty),
                         order_type=OrderType.MARKET,
-                        direction=Direction.SELL,
+                        direction=exit_direction,
                     )
                 )
         return orders

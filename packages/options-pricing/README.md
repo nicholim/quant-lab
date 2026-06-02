@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-138%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-201%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~99%25-brightgreen.svg)](pyproject.toml)
 
 A compact, readable options-pricing library: **Black-Scholes-Merton** closed-form pricing, a
@@ -15,7 +15,7 @@ A compact, readable options-pricing library: **Black-Scholes-Merton** closed-for
 
 Most "learn options pricing" code is either a one-file gist with no tests, or a heavyweight
 institutional library (QuantLib) whose surface area hides the math. This project sits in between:
-small enough to read end-to-end (~4 source files), correct enough to trust (138 tests cross-checked
+small enough to read end-to-end (~4 source files), correct enough to trust (201 tests cross-checked
 against textbook reference values and put-call parity, ~99% coverage), and packaged with a CLI and
 a web UI so you can actually *use* it. It can also pull a **real option chain** from free data and
 show you, per contract, where its own Black-Scholes price disagrees with the live market mid.
@@ -56,9 +56,13 @@ Pure-function pricing core (`src/`), consumed by two interchangeable front ends 
 | Capability | Where | Notes |
 |------------|-------|-------|
 | **Black-Scholes-Merton price** | `black_scholes_price` | European call/put, continuous dividend yield `q` (Merton form) |
+| **Black-76 futures option** | `black_76_price` (+ `black_76_delta` / `_gamma` / `_vega`) | European option on a future/forward `F` — discounts the forward, no spot carry; completes the vollib "core three" (BS / BSM / Black-76) |
 | **Binomial tree (CRR)** | `BinomialTree.price` | European **and** American; vectorized backward induction |
 | **Greeks** | `delta`, `gamma`, `theta`, `vega`, `rho` | All dividend-adjusted; theta per calendar day, vega/rho per 1% move |
+| **Higher-order Greeks** | `vanna`, `volga` (vomma), `charm` | Closed-form second-order Greeks; `vanna = d(delta)/d(σ)`, `volga = d(vega)/d(σ)`, `charm = -d(delta)/dT` |
 | **Implied volatility** | `implied_volatility` | Newton-Raphson; returns `None` on non-convergence / sub-intrinsic input |
+| **Vectorized / batch API** | `black_scholes_price_vec`, `greeks_vec`, `implied_volatility_vec` | Price + all Greeks + IV across a whole chain at once via NumPy broadcasting (no per-contract Python loop); accepts arrays/`pandas.Series` for strike/σ/T. Numerically identical to the scalar functions elementwise; the batch IV solver returns `nan` per element on impossible/non-converged inputs |
+| **Real IV surface** | `solve_iv_surface` / `plot_solved_iv_surface` (`src/greeks_visualizer.py`) | Solves *our* IV per (strike, time-to-expiry) across multiple expiries via the vectorized solver and plots IV as the z-axis — a genuine implied-vol surface, distinct from the constant-σ `plot_price_surface` |
 | **Edge-case handling** | core | `T→0` returns intrinsic value; `σ→0` uses deterministic forward |
 | **Tree visualization** | `BinomialTree.build_tree` | Full `(N+1, N+1)` price & value lattices |
 | **Charts** | `src/greeks_visualizer.py` | Greeks vs spot/time, 3D price surface (`plot_price_surface`), payoff diagrams, **real IV smile/surface** (`plot_market_iv_smile` / `plot_market_iv_surface`) from market data |
@@ -194,8 +198,10 @@ cp .env.example .env      # then edit FINNHUB_API_KEY=your_key_here
 
 The `.env` is read once at import via `python-dotenv`; a real exported variable always
 wins over `.env`. It's entirely optional — with no key, `get_spot` falls back to yfinance.
-For the Render deploy, the key is wired as a `sync: false` secret; see
-**[DEPLOY.md](DEPLOY.md)** for the dashboard steps.
+If a key is *set but rejected* (Finnhub 401/403, e.g. a malformed value), the library logs one
+actionable warning (the raw token, no prefix) and falls back to yfinance — so a bad key can't
+silently hide behind the fallback. For the Render deploy, the key is wired as a `sync: false`
+secret (paste only the raw key, no `FINNHUB_API_KEY=` prefix); see **[DEPLOY.md](DEPLOY.md)**.
 
 ### Offline mode
 
@@ -279,7 +285,7 @@ for the broader ecosystem.
 
 ## Correctness checks
 
-Accuracy here is validated, not asserted. The test suite (138 tests, ~99% branch coverage) includes
+Accuracy here is validated, not asserted. The test suite (201 tests, ~99% branch coverage) includes
 real cross-checks any practitioner would recognize — these are *correctness* checks, not performance
 benchmarks:
 
@@ -300,7 +306,7 @@ benchmarks:
 Run them:
 
 ```bash
-pytest                       # all 138 tests + coverage gate (95%)
+pytest                       # all 201 tests + coverage gate (95%)
 pytest tests/test_accuracy.py -v
 ```
 
@@ -329,5 +335,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, lint/test commands, and th
 ## License
 
 [MIT](LICENSE)
-</content>
-</invoke>

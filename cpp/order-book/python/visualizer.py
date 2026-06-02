@@ -81,6 +81,27 @@ class OrderBookVisualizer:
             plt.savefig(save_path, dpi=150, bbox_inches="tight")
         plt.show()
 
+    @classmethod
+    def plot_simulation(cls, result, out_dir: str | None = None) -> None:
+        """Render all three charts from a real-engine ``SimulationResult``.
+
+        ``result`` is the object returned by ``simulator.EngineSimulator.run`` —
+        its ``bids``/``asks``/``trades``/``spreads`` come straight off the C++
+        matching engine, so these charts reflect ACTUAL engine state, not a
+        Python toy book. When ``out_dir`` is given, each chart is saved there
+        (headless-safe under the Agg backend); otherwise they are shown.
+        """
+        import os
+
+        def _path(name: str) -> str | None:
+            return os.path.join(out_dir, name) if out_dir else None
+
+        cls.plot_depth_chart(result.bids, result.asks, save_path=_path("depth.png"))
+        if result.trades:
+            cls.plot_trade_tape(result.trades, save_path=_path("trade_tape.png"))
+        if result.spreads:
+            cls.plot_spread_over_time(result.spreads, save_path=_path("spread.png"))
+
 
 # Demo with sample data
 if __name__ == "__main__":

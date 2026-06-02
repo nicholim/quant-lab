@@ -4,10 +4,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
+[![Tests](https://img.shields.io/badge/tests-173%20passing-brightgreen.svg)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-~98%25-brightgreen.svg)](pyproject.toml)
 
-> An asyncio daemon that streams exchange trades over WebSocket, normalizes them to typed
-> records, caches the latest state in Redis, and batch-writes ticks + 1-minute OHLCV bars to
-> TimescaleDB.
+> An asyncio daemon that streams exchange trades over WebSocket (Binance or Coinbase via a
+> pluggable adapter), normalizes them to typed records, caches the latest state in Redis, and
+> batch-writes ticks + 1-minute OHLCV bars to a pluggable storage backend (TimescaleDB or DuckDB).
+> A `replay()` feeder streams stored history back out for backtests.
 
 ## Why this exists
 
@@ -40,13 +43,14 @@ graph LR
 
 **Data flow** (all `asyncio`, single process — see `src/pipeline.py`):
 
-1. **WebSocket client** (`websocket_client.py`) opens a combined `@trade` stream for the
-   configured symbols and yields raw JSON messages. On drop it reconnects with exponential
-   backoff (2s → 60s cap, `max_retries=10`); the retry budget resets only after a message is
-   actually delivered, so a connection that flaps cannot reconnect forever.
-2. **Normalizer** (`normalizer.py`) parses each raw message into a typed `Trade` (lowercased
-   symbol, float price/qty, `buy`/`sell` side, UTC-aware timestamp). Malformed messages are
-   logged and dropped, not raised.
+1. **WebSocket client** (`websocket_client.py`) connects to the URL the configured
+   `ExchangeAdapter` (`adapters.py`) builds for the symbols, sends the adapter's subscribe payload
+   if any, and yields raw JSON messages. On drop it reconnects with exponential backoff
+   (2s → 60s cap, `max_retries=10`); the retry budget resets only after a message is actually
+   delivered, so a connection that flaps cannot reconnect forever.
+2. **Normalizer** (`normalizer.py`) delegates per-exchange parsing to the adapter, turning each raw
+   message into a typed `Trade` (lowercased symbol, float price/qty, `buy`/`sell` aggressor side,
+   UTC-aware timestamp). Non-trade messages and malformed payloads are dropped, not raised.
 3. **Cache** (`cache.py`) writes the latest price (`price:<symbol>` hash), pushes onto a capped
    recent-trades list (`trades:<symbol>`, max 1000), and publishes to a `trades:<symbol>`
    pub/sub channel for downstream consumers.
@@ -60,10 +64,24 @@ graph LR
 ## Features
 
 - **WebSocket Ingestion** — Async client with auto-reconnect and exponential backoff (up to 60s)
+- **Pluggable exchanges** — An `ExchangeAdapter` protocol (`src/adapters.py`) captures everything that
+  varies per venue (WS URL, subscribe payload, raw-message → `Trade` parsing). Ships **Binance**
+  (default) and **Coinbase Exchange**; select with `EXCHANGE=binance|coinbase`. Adding a venue is one
+  small class — the client, normalizer schema, and storage are untouched
 - **Tick Normalization** — Standardize raw trade messages into typed `Trade` dataclass
-- **OHLCV Aggregation** — Real-time candlestick bar construction from tick-level data
+- **OHLCV Aggregation** — Real-time candlestick bar construction from tick-level data; a single-trade
+  minute still produces a valid bar and the final in-progress bar is flushed on shutdown (`flush_all()`)
+  so no bar is dropped at end-of-stream
+- **Replay / research feeder** — `Pipeline.replay(symbol, start, end, source="trades"|"ohlcv")` streams
+  stored records back out of *either* backend in timestamp order (oldest-first) as an async generator,
+  turning the ingest daemon into a historical feeder for backtests
+- **Bounded buffer / backpressure** — the in-memory trade buffer is capped at `MAX_BUFFER_SIZE`; on a
+  slow/stalled sink the pipeline blocks on an inline flush, and only if the sink stays unreachable does
+  it drop the oldest trades (with a logged running count) so a dead sink can never OOM the worker
 - **Redis Caching** — Latest prices, capped trade lists, and pub/sub for downstream consumers
-- **TimescaleDB Storage** — Hypertable-based time-series storage with batch inserts for throughput
+- **Pluggable Storage** — A `StorageBackend` protocol with two interchangeable sinks: **TimescaleDB**
+  (hypertables + batch inserts) or a local **DuckDB** file (`STORAGE_BACKEND=duckdb`) — the latter needs
+  no external DB or network, so the pipeline runs on free/cloud infra and locally with zero setup
 - **Async Pipeline** — Fully asynchronous architecture using `asyncio` with graceful shutdown
 
 ## Technical Highlights
@@ -114,12 +132,59 @@ All settings are read from environment variables (or a `.env` file) by `src/conf
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection URL |
-| `DATABASE_URL` | `postgresql://user:password@localhost:5432/marketdata` | TimescaleDB connection |
-| `WS_URL` | `wss://stream.binance.com:9443/ws` | WebSocket endpoint (Binance-style `@trade` streams) |
-| `SYMBOLS` | `btcusdt,ethusdt` | Comma-separated trading pairs |
+| `STORAGE_BACKEND` | `timescale` | Storage sink: `timescale` (external TimescaleDB) or `duckdb` (local file) |
+| `DATABASE_URL` | `postgresql://user:password@localhost:5432/marketdata` | TimescaleDB connection (used when `STORAGE_BACKEND=timescale`) |
+| `DUCKDB_PATH` | `data/marketdata.duckdb` | Local DuckDB file path (used when `STORAGE_BACKEND=duckdb`) |
+| `EXCHANGE` | `binance` | Exchange adapter: `binance` (URL-embedded `@trade` streams) or `coinbase` (Coinbase Exchange `matches` feed) |
+| `WS_URL` | `wss://stream.binance.com:9443/ws` | WebSocket endpoint (used by the Binance adapter; Coinbase uses its own fixed feed) |
+| `SYMBOLS` | `btcusdt,ethusdt` | Comma-separated trading pairs (Coinbase: `btcusd`/`btc-usd`, auto-mapped to `BTC-USD` products) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `BATCH_SIZE` | `100` | Trades buffered before a batch DB insert |
 | `FLUSH_INTERVAL_SECONDS` | `5` | Max seconds between DB flushes |
+| `MAX_BUFFER_SIZE` | `1000` | Backpressure cap on the in-memory trade buffer (block-then-drop-oldest when full) |
+
+### Storage backends
+
+Persistence goes through a small `StorageBackend` protocol (`src/storage_backend.py`) — the pipeline
+calls `connect` / `init_schema` / `insert_trades` / `insert_ohlcv` / `query_*` and doesn't care which
+sink is behind it. `STORAGE_BACKEND` (default `timescale`, unchanged behavior) selects the
+implementation:
+
+- **`timescale`** — `TimeSeriesStorage` (`asyncpg` → TimescaleDB hypertables). Needs an external
+  TimescaleDB; this is what the Render worker uses.
+- **`duckdb`** — `DuckDBStorage` writes the **same** normalized `trades` / `ohlcv` schema to a local
+  DuckDB file (`DUCKDB_PATH`), with **no external DB and no network**. Run the whole pipeline with
+  zero infra beyond Redis:
+
+  ```bash
+  STORAGE_BACKEND=duckdb DUCKDB_PATH=data/marketdata.duckdb python main.py --symbols btcusdt
+  ```
+
+  Captured tables can be exported to Parquet (`DuckDBStorage.export_parquet(dir)`) for downstream
+  research/backtesting tooling.
+
+### Exchange adapters
+
+The ingest side is exchange-agnostic behind an `ExchangeAdapter` protocol (`src/adapters.py`). An
+adapter supplies only the three things that differ per venue — the **WS URL** for a list of symbols,
+the **subscribe payload** to send after connecting (or `None` if streams are URL-embedded), and how to
+**parse one raw message into the same normalized `Trade`** the pipeline already consumes (lowercased
+symbol, float price/qty, `buy`/`sell` aggressor side, UTC-aware timestamp, `exchange` tag). The
+client, normalizer schema, and storage never change. `EXCHANGE` (default `binance`) selects it:
+
+- **`binance`** — `BinanceAdapter`: combined `@trade` streams embedded in the URL path
+  (`…/btcusdt@trade/ethusdt@trade`), no subscribe message; `m` ("buyer is maker") maps to the
+  aggressor side. Built from `WS_URL`, so the default path is byte-identical to before.
+- **`coinbase`** — `CoinbaseAdapter`: connects to the fixed `wss://ws-feed.exchange.coinbase.com`
+  feed and subscribes to the `matches` channel for the configured products. A `match` /`last_match`
+  message (`{"type":"match","product_id":"BTC-USD","price":"…","size":"…","side":"sell",…}`) is
+  parsed to a `Trade`. Coinbase's `side` is the **maker** side, so it's flipped to the **taker/
+  aggressor** side to stay consistent with Binance ("who crossed the spread"). Symbols round-trip
+  `btcusd` ⇄ `BTC-USD`. Both venues are keyless public market data.
+
+  ```bash
+  EXCHANGE=coinbase SYMBOLS=btcusd,ethusd python main.py
+  ```
 
 ## Usage
 
@@ -138,6 +203,31 @@ trade = normalizer.normalize_trade({
 bar = normalizer.accumulate_trade(trade)
 if bar:
     print(f"1m bar: O={bar.open} H={bar.high} L={bar.low} C={bar.close} V={bar.volume}")
+
+# Emit the final in-progress bar(s) at end-of-stream (otherwise dropped)
+for bar in normalizer.flush_all():
+    ...
+```
+
+### Replay stored data as a research feeder
+
+`Pipeline.replay()` streams previously-persisted records back out of whichever `StorageBackend` is
+configured, in timestamp order (oldest-first), as an async generator — so a backtest can consume
+captured history through the same shape as the live feed:
+
+```python
+from datetime import UTC, datetime
+from src.config import Config
+from src.pipeline import Pipeline
+
+pipe = Pipeline(Config())          # STORAGE_BACKEND=duckdb or timescale
+await pipe.storage.connect()
+start, end = datetime(2024, 1, 1, tzinfo=UTC), datetime(2024, 1, 2, tzinfo=UTC)
+
+async for trade in pipe.replay("btcusdt", start, end):           # source="trades" (default)
+    ...
+async for bar in pipe.replay("btcusdt", start, end, source="ohlcv", interval="1m"):
+    ...
 ```
 
 ## vs. cryptofeed / ccxt-pro / ArcticDB
@@ -149,20 +239,21 @@ library or a standalone database engine.
 | | This pipeline | [cryptofeed](https://github.com/bmoscon/cryptofeed) | [ccxt-pro](https://docs.ccxt.com/#/ccxt.pro/README) | [ArcticDB](https://github.com/man-group/ArcticDB) |
 |---|---|---|---|---|
 | What it is | Streaming ingest + storage daemon | Crypto WS feed handler library | Unified exchange WS/REST client | DataFrame time-series store |
-| Exchanges | One Binance-style `@trade` stream | 40+ exchanges, many channels | 100+ exchanges (unified API) | N/A (storage only) |
+| Exchanges | Binance + Coinbase (`@trade` / `matches`), pluggable adapter | 40+ exchanges, many channels | 100+ exchanges (unified API) | N/A (storage only) |
 | Channels | Trades → 1m OHLCV | trades, L2/L3 book, ticker, funding, … | trades, book, ticker, OHLCV, orders | N/A |
-| Persistence | Built-in: Redis cache + TimescaleDB | Pluggable backends (Redis, Mongo, Kafka, …) | None (you write your own) | Its core job (S3/LMDB, versioned) |
-| Ready to run? | Yes — `python main.py` | Library; you write the handler | Library; you write the loop | Library; you write read/write code |
+| Persistence | Built-in, pluggable: Redis cache + TimescaleDB or local DuckDB | Pluggable backends (Redis, Mongo, Kafka, …) | None (you write your own) | Its core job (S3/LMDB, versioned) |
+| Replay / research feeder | Yes (`Pipeline.replay()` over the store) | No | No | Read API (it is the store) |
+| Ready to run? | Yes — `python main.py` (zero infra with `STORAGE_BACKEND=duckdb`) | Library; you write the handler | Library; you write the loop | Library; you write read/write code |
 | License | MIT (this repo) | Open source | ccxt is open source; **ccxt-pro is paid** | Open source |
 
 **What this project does well:** it is a complete, deployable example you can run as-is — resilient
 reconnect, typed normalization, batched writes that survive a flush failure, and a TimescaleDB
 schema with hypertables and per-symbol indexes already wired up.
 
-**What it intentionally does *not* do:** no multi-exchange abstraction, no order books / ticker /
-funding channels, no order placement, and only a single Binance-style `@trade` stream shape. It is
-not a database engine — TimescaleDB does the storage, ArcticDB-style versioning/time-travel is out
-of scope.
+**What it intentionally does *not* do:** no order books / ticker / funding channels, no order
+placement, and only the trade-stream shape (one channel) on the two adapters it ships (Binance,
+Coinbase) — not cryptofeed's 40+ venues or many channels. It is not a database engine — Timescale
+or DuckDB does the storage, ArcticDB-style versioning/time-travel is out of scope.
 
 **Who it's for:** someone who wants their own durable trade + OHLCV store from a crypto stream and
 prefers a small, readable codebase they can extend over adopting a large feed-handler framework. If
@@ -180,10 +271,13 @@ market-data-pipeline/
 ├── requirements.txt
 └── src/
     ├── config.py             # Dataclass-based config from env vars
-    ├── websocket_client.py   # Async WS client with auto-reconnect
-    ├── normalizer.py         # Trade/OHLCV normalization and aggregation
+    ├── adapters.py           # ExchangeAdapter protocol + Binance/Coinbase adapters
+    ├── websocket_client.py   # Async WS client with auto-reconnect (driven by an adapter)
+    ├── normalizer.py         # Trade/OHLCV normalization (parsing delegated to the adapter)
     ├── cache.py              # Redis caching layer (prices, trades, pub/sub)
-    ├── storage.py            # TimescaleDB storage (hypertables, batch inserts)
+    ├── storage_backend.py    # StorageBackend protocol (the persistence contract)
+    ├── storage.py            # TimescaleDB backend (hypertables, batch inserts)
+    ├── duckdb_storage.py     # Local DuckDB/Parquet backend (no external DB/network)
     └── pipeline.py           # Main orchestrator tying all components together
 ```
 
@@ -193,37 +287,57 @@ This pipeline is a **daemon**, not a web service, so it deploys as a Render
 **background worker** (`type: worker`) built from the included `Dockerfile`.
 
 ```bash
-# Build and run locally
+# Build and run locally — no external DB (DuckDB on local disk + Redis only)
 docker build -t market-data-pipeline .
 docker run --rm \
   -e REDIS_URL=redis://host:6379 \
+  -e STORAGE_BACKEND=duckdb \
+  -e DUCKDB_PATH=data/marketdata.duckdb \
+  market-data-pipeline
+
+# OR with durable TimescaleDB storage
+docker run --rm \
+  -e REDIS_URL=redis://host:6379 \
+  -e STORAGE_BACKEND=timescale \
   -e DATABASE_URL="postgresql://user:pass@host:5432/marketdata?sslmode=require" \
   market-data-pipeline
 ```
 
 ### Render (via `render.yaml` blueprint)
 
+The blueprint deploys this worker **with no external database by default**:
+`STORAGE_BACKEND=duckdb` persists the normalized trades/ohlcv to a local DuckDB
+file (`DUCKDB_PATH`), so the worker needs only Redis + a writable disk.
+
 1. Push this repo to GitHub, then in Render: **New → Blueprint** and select it.
 2. The blueprint creates the worker plus a managed **Key Value (Redis-compatible)**
-   instance and auto-injects `REDIS_URL`.
-3. **TimescaleDB is not Render Postgres.** Render's managed Postgres lacks the
-   TimescaleDB extension/hypertables this pipeline expects. Provision an **external
-   TimescaleDB** (e.g. [Timescale Cloud](https://www.timescale.com/cloud) free tier or
-   Aiven) and paste its connection string into the `DATABASE_URL` secret env var in the
-   Render dashboard (it is marked `sync: false`, so Render prompts for it on deploy).
-4. Adjust `WS_URL` / `SYMBOLS` env vars as needed.
+   instance and auto-injects `REDIS_URL`. With the DuckDB default you set **no
+   secrets** — leave `DATABASE_URL` unset.
+3. **Ephemeral disk on the free plan.** The DuckDB file lives on the container's
+   disk, which is wiped on every redeploy/restart. That is fine for a live-streaming
+   demo (the worker keeps appending fresh ticks/bars), but data is not durable. For
+   durability either attach a Render **persistent disk**, or switch to Timescale.
+4. **Optional — durable Timescale storage.** Render's managed Postgres lacks the
+   TimescaleDB extension/hypertables this pipeline expects, so provision an
+   **external TimescaleDB** ([Timescale Cloud](https://www.timescale.com/cloud)
+   free tier or Aiven). Then in the Render dashboard set `STORAGE_BACKEND=timescale`
+   and paste the connection string into the `DATABASE_URL` secret (marked
+   `sync: false`, so Render prompts for it on deploy).
+5. Adjust `EXCHANGE` (`binance`/`coinbase`), `WS_URL`, `SYMBOLS`, and
+   `MAX_BUFFER_SIZE` env vars as needed.
 
 The service is defined in the **root `render.yaml`** (one blueprint for the whole monorepo)
 under the `market-data-pipeline` worker, with `rootDir: packages/market-data` and
 `dockerfilePath: ./Dockerfile`. `autoDeploy` is off, so deploys are manual. There is **no
 per-package `render.yaml`** — edit the root file.
 
-### Behavior without live infra (Redis / TimescaleDB)
+### Behavior without live infra (Redis / a store)
 
-Redis and TimescaleDB are **hard dependencies** for ingestion — there is nowhere to cache or
-persist trades without them. The worker does **not** silently no-op or hang; it **fails fast
-with one actionable log line** and exits non-zero, so the failure is obvious in the Render logs
-and the worker restarts (and retries) on schedule. On startup `Pipeline.start()`:
+A store is a **hard dependency** for ingestion (there is nowhere to cache or persist trades
+without one), but with the DuckDB default it is just a local file — only **Redis** has to be
+external. The worker does **not** silently no-op or hang; it **fails fast with one actionable
+log line** and exits non-zero, so the failure is obvious in the Render logs and the worker
+restarts (and retries) on schedule. On startup `Pipeline.start()`:
 
 - Connects to Redis first. If `REDIS_URL` points at nothing, you get a single line like:
 
@@ -233,20 +347,22 @@ and the worker restarts (and retries) on schedule. On startup `Pipeline.start()`
   ```
 
   and the worker exits — instead of dumping a ~20-frame redis/asyncio traceback.
-- Then connects to TimescaleDB and runs `init_schema()` (which calls `create_hypertable`, so a
-  plain Postgres without the Timescale extension fails here). A bad/unreachable `DATABASE_URL`
-  produces the analogous `Could not connect to/initialize TimescaleDB at … Set DATABASE_URL …`
-  line, then exit.
+- Then connects to the selected store. With `STORAGE_BACKEND=duckdb` a bad/unwritable
+  `DUCKDB_PATH` produces a `DUCKDB_PATH`-fix line. With `STORAGE_BACKEND=timescale` it runs
+  `init_schema()` (which calls `create_hypertable`, so a plain Postgres without the Timescale
+  extension fails here) and an unreachable `DATABASE_URL` produces the analogous
+  `Could not connect to/initialize TimescaleDB at … Set DATABASE_URL …` line, then exits.
 
 This is by design: a market-data ingester with no store is a no-op, so booting "successfully"
 into a state that drops every trade would be worse than failing loudly. Once it is connected,
 the WebSocket layer is the resilient part — it auto-reconnects with exponential backoff and a
 retry budget (see `websocket_client.py`), so transient stream drops do not kill the worker.
 
-> **No managed-infra demo:** because Render cannot host TimescaleDB and the free Key Value
-> add-on is the only piece it provisions, this worker is the one project in the monorepo that
-> needs the user to bring an external database before it does anything useful. It is included as
-> a deployable, honest example rather than a one-click live demo.
+> **One-Redis demo:** with the `STORAGE_BACKEND=duckdb` default the only external piece the
+> Blueprint needs is the free managed Key Value (Redis) it provisions itself — no external
+> database. The DuckDB file is ephemeral on the free plan, so this is a runnable live-streaming
+> demo rather than durable storage; bring an external TimescaleDB (set `STORAGE_BACKEND=timescale`
+> + `DATABASE_URL`) or a persistent disk when you want the data to survive restarts.
 
 ## Development
 
@@ -254,7 +370,7 @@ retry budget (see `websocket_client.py`), so transient stream drops do not kill 
 pip install -r requirements.txt
 ruff check .      # lint
 mypy              # type-check (gradual)
-pytest            # 76 tests, ~99% coverage; gate --cov-fail-under=85
+pytest            # 173 tests, ~98% coverage; gate --cov-fail-under=85
 ```
 
 The test suite uses in-memory fakes (`FakeWebSocket` / `FakeRedis` / `FakePool` in

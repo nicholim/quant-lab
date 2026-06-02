@@ -11,7 +11,16 @@ import json
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 
-OBJECTIVE_CHOICES = ("sharpe", "min_vol", "risk_parity", "sortino", "min_cvar", "both", "all")
+OBJECTIVE_CHOICES = (
+    "sharpe",
+    "min_vol",
+    "risk_parity",
+    "sortino",
+    "min_cvar",
+    "hrp",
+    "both",
+    "all",
+)
 EXPORT_CHOICES = ("csv", "json", "both", "none")
 
 

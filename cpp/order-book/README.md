@@ -6,6 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![clang-format](https://img.shields.io/badge/code%20style-clang--format-1f425f.svg)](.clang-format)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
+[![Tests](https://img.shields.io/badge/tests-53%20C%2B%2B%20%7C%2027%20Python-brightgreen.svg)](tests/)
 
 A real **price-time-priority limit order book matching engine** in C++17, with a Python layer for
 order-flow simulation and depth-of-book visualization.
@@ -23,9 +24,10 @@ handles the things Python is good at — generating order flow and plotting the 
 ## Architecture
 
 The system is split in two: a C++17 matching-engine core (the deterministic, performance-sensitive
-part) and a Python visualization/simulation layer (order-flow generation and charting). The layers
-are decoupled — Python does not bind into the C++ core; it generates order flow (JSON) and renders
-book/trade state.
+part) and a Python visualization/simulation layer (order-flow generation and charting). The two are
+bridged by **pybind11 bindings** (`orderbook` package) so Python can drive the live C++ engine
+directly — submit orders, read fills, and inspect book state in-process — in addition to the legacy
+JSON order-flow + charting path.
 
 ```mermaid
 graph LR
@@ -63,20 +65,35 @@ graph LR
 |-------|----------------|-----------|
 | **C++17 core** | `OrderBook` (single symbol) + `MatchingEngine` (multi-symbol router); matching, partial fills, cancel/modify, depth queries | `include/`, `src/order_book.cpp`, `src/matching_engine.cpp` |
 | **Demo** | Scripted scenario: place → match → cancel → sweep, prints book state | `src/main.cpp` |
-| **Python viz** | Depth chart, trade tape, spread-over-time (matplotlib) | `python/visualizer.py` |
-| **Python sim** | Random order-flow generator with a price random walk → `orders.json` | `python/simulator.py` |
+| **Python bindings** | pybind11 module exposing `OrderBook`/`MatchingEngine`/`Order`/`Trade` + the `Side`/`OrderType`/`TimeInForce` enums so Python drives the live engine | `src/bindings.cpp`, `python/orderbook/` |
+| **Python viz** | Depth chart, trade tape, spread-over-time (matplotlib) — rendered from real engine state | `python/visualizer.py` |
+| **Python sim** | Synthetic order flow driven through the **live C++ engine** via the binding; collects real fills, spread, and depth | `python/simulator.py` |
 
 ## Features
 
 - **Price-time priority** — best-price-first, FIFO-within-level matching, as used by major exchanges
 - **Order types** — `MARKET` and `LIMIT` orders, with partial-fill support across price levels
+- **Time-in-force** — `GTC` (default), `IOC` (Immediate-Or-Cancel), `FOK` (Fill-Or-Kill), and
+  `POST_ONLY` (maker-only), set via the `Order::tif` field
 - **Order management** — add, cancel, and modify resting orders
 - **Book depth** — bid/ask depth at configurable levels, best bid/ask, spread, volume-at-price
 - **Multi-symbol** — `MatchingEngine` routes to a separate `OrderBook` per symbol
+- **Python bindings (pybind11)** — drive the live C++ engine from Python: submit MARKET/LIMIT ×
+  GTC/IOC/FOK/POST_ONLY orders and read back fills + book state in-process (no subprocess)
 - **Python visualization** — depth charts, trade tape, and spread analysis
 
-> **Scope note:** order types are `MARKET` and `LIMIT` only. Stop / stop-limit / iceberg / IOC / FOK
-> orders are intentionally **not** implemented — see [Roadmap](#roadmap).
+> **Scope note:** price types are `MARKET` and `LIMIT` only. Stop / stop-limit / iceberg orders are
+> intentionally **not** implemented — see [Roadmap](#roadmap). IOC / FOK / post-only are modeled as a
+> `TimeInForce` flag on top of the price type (the FIX-style split), not as extra `OrderType` values.
+
+### Time-in-force semantics
+
+| TIF | Behavior |
+|-----|----------|
+| `GTC` (default) | Match against the book, then rest any remainder (`LIMIT` only; `MARKET` never rests). |
+| `IOC` | Match as much as possible immediately; cancel any unfilled remainder (never rests). |
+| `FOK` | Fill the **entire** quantity immediately or do nothing — no partial fills, book left untouched on kill. |
+| `POST_ONLY` | Maker-only: rejected (nothing rests, no trades) if it would cross/take liquidity; otherwise rests. |
 
 ## Technical highlights
 
@@ -146,26 +163,82 @@ crossing limit, cancels, then sweeps all bids):
 === Done ===
 ```
 
+The `cmake --build build` above also compiles the **pybind11 extension** into
+`python/orderbook/_orderbook.*.so` (via FetchContent — no pip/system install of pybind11 needed),
+so `import orderbook` works immediately:
+
+```python
+from orderbook import MatchingEngine, Order, Side, OrderType, TimeInForce
+
+engine = MatchingEngine()
+engine.submit_order(Order(1, "AAPL", Side.SELL, OrderType.LIMIT, 150.0, 100))
+trades = engine.submit_order(Order(2, "AAPL", Side.BUY, OrderType.LIMIT, 150.0, 60))
+print(trades[0].price, trades[0].quantity)   # 150.0 60
+
+book = engine.get_order_book("AAPL")
+print(book.get_best_ask(), book.get_volume_at_price(150.0))   # 150.0 40
+
+# IOC / FOK / POST_ONLY via the tif argument
+engine.submit_order(Order(3, "AAPL", Side.BUY, OrderType.LIMIT, 150.0, 25, TimeInForce.IOC))
+```
+
+(Run from `python/`, or put `python/` on `PYTHONPATH`.) To build only the C++ demo + tests without
+the binding, pass `-DBUILD_PYTHON_BINDINGS=OFF`.
+
 ### 2. Run the Python simulator & visualizer
 
 ```bash
-cd python
-pip install -r requirements.txt
+pip install -r python/requirements.txt
 
-python simulator.py    # generates orders.json (500 random orders) + a summary
-python visualizer.py   # opens depth chart, trade tape, and spread plots
+# Generate synthetic order flow, drive it through the LIVE C++ engine via the
+# binding, and print the real engine output (trades, best bid/ask, depth).
+python python/simulator.py --orders 500 --seed 42
+
+# Same run, but also render depth chart / trade tape / spread charts (headless)
+# from the actual matching-engine state into out/.
+python python/simulator.py --orders 500 --seed 42 --plot out/
 ```
+
+`simulator.py` no longer matches orders in Python — it submits the generated
+flow to `orderbook.OrderBook.add_order` and reads fills/depth/spread straight
+off the C++ engine, then hands that real state to `visualizer.py`. (Requires the
+compiled extension; build it in step 1 first.)
 
 ### 3. Run the tests
 
 ```bash
-# C++ unit tests (35 GoogleTest cases via ctest)
+# C++ unit tests (53 GoogleTest cases via ctest)
 cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 
-# Python tests (22 tests; builds the C++ demo in a fixture, then exercises viz/sim)
+# Python tests (27 tests; drives the compiled pybind11 engine in-process +
+# covers the viz/sim modules). Build the extension first (step 1 above).
 pytest          # from the repo root; runs with coverage (--cov-fail-under=80)
 ```
+
+### 4. Benchmark the matching engine
+
+`benchmarks/bench.py` drives the live C++ engine through the `orderbook` binding with a large
+synthetic order flow (~80% LIMIT / 20% MARKET, both sides, around a drifting mid) and reports
+**throughput** (orders/sec) and the **per-order latency** distribution (p50/p90/p99, microseconds).
+Build the extension first (step 1), then:
+
+```bash
+python benchmarks/bench.py                       # 500k orders/run, ~10s total
+python benchmarks/bench.py --orders 2000000 --repeat 5
+```
+
+Measured on an **Apple M2 Pro (arm64, macOS 26.5), Python 3.12**, 500,000 orders/run, seed 7
+(driving the engine through the pybind11 binding, so the numbers include the Python→C++ call
+overhead — the matching path itself is faster):
+
+| Metric | Value |
+|--------|-------|
+| Throughput | **~186,000 orders/sec** (best of 3 runs) |
+| Latency p50 | **4.8 µs** |
+| Latency p90 | **10.6 µs** |
+| Latency p99 | **18.1 µs** |
+| Trades produced | 466,518 on 500,000 orders |
 
 ## Usage (C++)
 
@@ -221,24 +294,30 @@ For ecosystem context, see [awesome-quant](https://github.com/wilsonfreitas/awes
 
 ```
 order-book-simulator/
-├── CMakeLists.txt            # CMake build config (C++17) + GoogleTest via FetchContent
+├── CMakeLists.txt            # CMake build (C++17) + GoogleTest & pybind11 via FetchContent
+├── benchmarks/
+│   └── bench.py              # Throughput + latency harness (drives the engine via the binding)
 ├── include/
-│   ├── order.h               # Order struct, Side / OrderType enums
+│   ├── order.h               # Order struct, Side / OrderType / TimeInForce enums
 │   ├── trade.h               # Trade struct
 │   ├── order_book.h          # Single-symbol order book
 │   └── matching_engine.h     # Multi-symbol engine facade
 ├── src/
 │   ├── order_book.cpp        # Price-time priority matching implementation
 │   ├── matching_engine.cpp   # Symbol routing and book management
+│   ├── bindings.cpp          # pybind11 module (_orderbook): engine exposed to Python
 │   └── main.cpp              # Demo: place, match, cancel, sweep
 ├── tests/
-│   ├── test_order_book.cpp   # 35 GoogleTest cases (ctest)
-│   ├── test_orderbook.py     # Python tests against the compiled demo
-│   └── test_python_viz.py    # Visualizer/simulator tests (headless Agg)
+│   ├── test_order_book.cpp   # 53 GoogleTest cases (ctest)
+│   ├── conftest.py           # Puts python/ on sys.path for the test suite
+│   ├── test_orderbook.py     # Binding-driven engine tests (in-process, no subprocess)
+│   ├── test_simulator_engine.py # Simulator→C++ engine→visualizer end-to-end (headless Agg)
+│   └── test_python_viz.py    # Visualizer/flow-generator tests (headless Agg)
 └── python/
     ├── requirements.txt
-    ├── visualizer.py         # Depth chart, trade tape, spread plots
-    └── simulator.py          # Random order-flow generator
+    ├── orderbook/            # pybind11 re-export package (compiled _orderbook lands here)
+    ├── visualizer.py         # Depth chart, trade tape, spread plots (from real engine state)
+    └── simulator.py          # Order-flow generator + EngineSimulator (drives the C++ engine)
 ```
 
 ## Data structures
@@ -254,10 +333,13 @@ order-book-simulator/
 
 Intentionally out of scope today, in rough priority order:
 
-- Stop / stop-limit orders (trigger on last trade price)
-- Time-in-force (IOC / FOK) and iceberg orders
-- A real Python binding (pybind11) so the viz layer drives the live C++ book
-- A reproducible matching-throughput benchmark (orders/sec) under `benchmarks/`
+- Stop / stop-limit orders (trigger on last trade price) and iceberg orders
+- WASM compile of the C++ core for an in-browser depth-chart demo on the showcase site
+
+The Python simulation layer now drives the live C++ engine end-to-end:
+`simulator.EngineSimulator` submits generated flow to `orderbook.OrderBook` and
+feeds the real fills/depth/spread into `visualizer.OrderBookVisualizer.plot_simulation`
+(done 2026-06-02).
 
 ## Contributing
 
@@ -267,5 +349,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the C++ (clang-format + GoogleTest/ct
 ## License
 
 [MIT](LICENSE)
-</content>
-</invoke>

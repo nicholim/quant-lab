@@ -21,10 +21,15 @@ class PerformanceAnalytics:
         trade_df: pd.DataFrame,
         risk_free_rate: float = 0.02,
         benchmark_returns: pd.Series | None = None,
+        allow_short: bool = False,
     ):
         self.equity = equity_df
         self.trades = trade_df
         self.risk_free_rate = risk_free_rate
+        # When True, round-trip P&L uses signed FIFO so short round-trips
+        # (sell-to-open -> buy-to-cover) are matched. Default False preserves the
+        # long-only matching exactly (a SELL with no open long is dropped).
+        self.allow_short = allow_short
         self.returns = self.equity["equity"].pct_change().dropna()
         self._pm = (
             compute_metrics(
@@ -83,9 +88,26 @@ class PerformanceAnalytics:
         return self._pm.calmar_ratio if self._pm else 0.0
 
     def _compute_round_trip_pnl(self) -> list[float]:
-        """Match BUY/SELL trades per symbol into round-trip P&L."""
+        """Match trades per symbol into round-trip P&L via FIFO lot accounting.
+
+        Long-only (``allow_short`` False, the default): identical to the original
+        behavior — BUYs open lots, SELLs close them FIFO with
+        ``(sell - entry) * qty``, and a SELL with no open long is dropped.
+
+        With ``allow_short`` True the FIFO is fully signed: a trade in the same
+        direction as the open side (or on an empty book) opens a lot; an opposite
+        trade closes lots FIFO and, after the book empties, the remainder opens a
+        new lot on the other side. Closing a LONG lot earns ``(exit - entry)*qty``;
+        closing a SHORT lot earns ``(entry - cover)*qty`` (sold high, covered low
+        is a profit).
+        """
         if self.trades.empty:
             return []
+        if not self.allow_short:
+            return self._round_trip_pnl_long_only()
+        return self._round_trip_pnl_signed()
+
+    def _round_trip_pnl_long_only(self) -> list[float]:
         pnl_list: list[float] = []
         open_positions: dict[str, list[dict]] = {}
 
@@ -107,6 +129,38 @@ class PerformanceAnalytics:
                     remaining -= matched
                     if entry["qty"] <= 0:
                         open_positions[sym].pop(0)
+        return pnl_list
+
+    def _round_trip_pnl_signed(self) -> list[float]:
+        """Signed FIFO: handles both long (buy-then-sell) and short
+        (sell-then-cover) round trips, including flips through flat."""
+        pnl_list: list[float] = []
+        # Per symbol: FIFO list of open lots {qty>0, price, side=+1 long / -1 short}.
+        books: dict[str, list[dict]] = {}
+
+        for _, trade in self.trades.iterrows():
+            sym = trade["symbol"]
+            book = books.setdefault(sym, [])
+            trade_side = 1 if trade["direction"] == "BUY" else -1
+            remaining = trade["quantity"]
+            price = trade["price"]
+
+            # Close lots whose side is opposite this trade, FIFO.
+            while remaining > 0 and book and book[0]["side"] == -trade_side:
+                lot = book[0]
+                matched = min(remaining, lot["qty"])
+                if lot["side"] == 1:  # closing a long with a SELL
+                    pnl_list.append((price - lot["price"]) * matched)
+                else:  # closing a short with a BUY
+                    pnl_list.append((lot["price"] - price) * matched)
+                lot["qty"] -= matched
+                remaining -= matched
+                if lot["qty"] <= 0:
+                    book.pop(0)
+
+            # Any remainder opens/extends a lot on this trade's side.
+            if remaining > 0:
+                book.append({"qty": remaining, "price": price, "side": trade_side})
         return pnl_list
 
     def win_rate(self) -> float:

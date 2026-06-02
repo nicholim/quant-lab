@@ -19,33 +19,31 @@ the standing rules. Keep it accurate — agents trust it instead of re-discoveri
 > wire REAL live market data (free sources) into the apps and harden them for cloud deploy.
 > All work goes on the `feature/agent-improvements` branch (off `main`); never push.
 
-**Done so far (2026-06-02):** `packages/options-pricing` prices REAL option chains from free data —
-chains/expirations via **yfinance** (keyless), spot via **Finnhub** (`FINNHUB_API_KEY`, free tier) with
-yfinance fallback, `price_chain` adds `model_price`/`our_iv`/`mispricing`, real IV smile/surface plots,
-`--offline`/`OPTIONS_PRICING_OFFLINE=1` bundled-fixture fallback, CLI + Streamlit "Live market" tab, local
-`.env` support. 139 tests, 99% cov; `FINNHUB_API_KEY` wired into `render.yaml` as a `sync:false` secret.
-Then (RESUME items 1 & 2, this pass): **`packages/backtesting`** and **`packages/portfolio-optimization`**
-got the same production posture — a single shared resilient yfinance layer (retry + exponential backoff on
-transient/rate-limit/timeout, typed `MarketDataError`) beneath the existing DuckDB/pickle caches, plus a
-bundled offline fixture + `BACKTESTING_OFFLINE` / `PORTFOLIO_OFFLINE` (and `--offline`) escape hatch so
-demos never hard-fail on Render egress (backtesting 126 tests/87% cov; portfolio 167 tests/95% cov). And
-**`packages/market-data`**'s Render Docker-worker deploy story was verified — render.yaml/Dockerfile
-confirmed correct, and the worker now FAILS FAST with one actionable log line (not a 20-frame traceback)
-when Redis/Timescale are unreachable (76 tests/99% cov). Cross-package metrics+optimizer contract intact.
+**Done (2026-06-02): the ENTIRE P0/P1/P2 backlog is complete + features are wired end-to-end.** Beyond the
+foundational hygiene/tests/docs/deploy (P0/P1) and the live-data resilience layer (resilient yfinance +
+offline fixtures + Finnhub spot w/ 401 warning across the data packages), this session finished ALL P2
+feature-comprehensiveness picks across all 5 packages and made them reachable from CLI/API/UI/sim:
+- **options-pricing** (201 tests): higher-order Greeks (vanna/volga/charm), Black-76, vectorized batch
+  price/greeks/IV, true solved IV surface.
+- **portfolio-optimization** (251 tests): solved efficient frontier, Ledoit-Wolf shrinkage, HRP,
+  Black-Litterman — all exposed in the CLI + FastAPI (`/optimize/black-litterman` + example).
+- **backtesting** (191 tests): CSV/DataFrame handlers, 7 wired optimizer objectives, native short selling
+  (opt-in, long-only parity proven); CLI `--allow-short/--data-csv/--offline/--objective hrp`.
+- **market-data** (173 tests): pluggable StorageBackend (Timescale + **DuckDB**, the deploy default),
+  `replay()`, OHLCV final-bar fix, backpressure cap, pluggable ExchangeAdapter (**Binance + Coinbase**).
+- **cpp/order-book** (53 C++ + 41 py): IOC/FOK/post-only, **pybind11 bindings**, throughput/latency
+  benchmark, and `simulator.py` now drives the REAL C++ engine through the binding.
+Total **910 tests** green; ruff/format/mypy clean; cross-package contract intact. `render.yaml` deploys
+market-data on Redis+disk alone (DuckDB default, no external Timescale). Branches cleaned to just
+`feature/agent-improvements` + `main`. **NOTHING PUSHED** — 43 commits await the user's push.
 
-**Do next (in priority order):**
-1. Optional: add `.env`/python-dotenv support to `backtesting` / `portfolio-optimization` / `market-data`
-   for parity (options-pricing has it), so cloud secrets can live in a file.
-2. Optional polish: wire the new `BACKTESTING_OFFLINE` / `PORTFOLIO_OFFLINE` flags into `render.yaml` (and
-   portfolio's FastAPI demo) for a guaranteed-deterministic cloud showcase; expose `--offline` through
-   backtesting's `main.py`/dashboard end-to-end. `deploy-engineer`.
-3. Move to the **P2 feature comprehensiveness** backlog (see IMPROVEMENTS.md) now that data resilience is
-   done across all data-fetching packages — e.g. order-book **pybind11 bindings** (highest-leverage), the
-   portfolio **solved efficient frontier / HRP / Ledoit-Wolf** picks, or options **higher-order Greeks /
-   Black-76**. `feature-architect`.
-
-**Housekeeping:** a stale orphan branch `feature/agent-improvements-stale-orphan` (unrelated history)
-can be deleted once the current `feature/agent-improvements` is confirmed good and pushed.
+**Do next — optional polish only (no formal backlog items remain):**
+1. Dashboard reachability: a Dash `--allow-short` checkbox + `hrp` objective dropdown (needs the shared
+   `OBJECTIVE_TO_KEY`/`run_analysis` path extended); surface the vectorized IV surface in the Streamlit app.
+2. More market-data exchange adapters (Kraken/Bitstamp are ~1 class each); a `--exchange` CLI flag.
+3. A native C++ micro-benchmark to isolate the matching path from pybind11 overhead.
+4. `.env`/python-dotenv parity for the non-options packages.
+First action for the user: **push the branch**, then connect Render Blueprint + Netlify.
 
 ---
 

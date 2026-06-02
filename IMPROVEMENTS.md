@@ -46,29 +46,864 @@ them to the changelog below when done.
 Per-repo prioritized "do these next" (analysis only — NOT yet implemented; awaiting user go-ahead). Full analyses in the changelog below.
 
 - **backtesting-framework** (vs backtrader/vectorbt/backtesting.py/zipline): already strong (multi-asset, limit/stop/OCO, trailing stops, walk-forward all exist).
-  1. `CSVDataHandler`/`DataFrameDataHandler` — kill the hard yfinance dep, enable offline/custom/intraday data (S, high impact, no API risk).
-  2. Wire the 3 unused optimizer objectives (`sortino`, `max_return_target_vol`, `min_vol_target_return`) into `OptimizationRebalanceStrategy` (S, uses contract only).
-  3. Native short selling — biggest real gap vs backtrader/zipline (L; guard FIFO P&L parity + keep metrics in the shared module).
+  1. [x] `CSVDataHandler`/`DataFrameDataHandler` — DONE 2026-06-02 (offline/custom/intraday data, no yfinance dep).
+  2. [x] Wire the 3 unused optimizer objectives (`sortino`, `max_return_target_vol`, `min_vol_target_return`) into `OptimizationRebalanceStrategy` — DONE 2026-06-02.
+  3. [x] Native short selling — biggest real gap vs backtrader/zipline — DONE 2026-06-02 (opt-in
+     `Portfolio(allow_short=True)`; signed positions + short cash accounting + inverse MtM +
+     short-side exits + signed-FIFO round-trip P&L; default-off long-only proven byte-identical).
 - **market-data-pipeline** (vs cryptofeed/ccxt-pro/ArcticDB): honest single-stream Binance-trades daemon.
-  1. Pluggable `ExchangeAdapter` protocol + a 2nd exchange (M, high — the headline gap).
-  2. Pluggable `StorageBackend` + Parquet/DuckDB sink — decouples from Timescale (which Render can't host), makes the demo runnable (M, high).
-  3. `replay(symbol, start, end)` from store — read API already exists; turns the daemon into a research feeder (S–M, high). Also fix the OHLCV roll-up (drops final bar, needs ≥2 trades) and add a bounded-buffer/backpressure cap.
+  1. [x] Pluggable `ExchangeAdapter` protocol + a 2nd exchange (M, high — the headline gap). DONE 2026-06-02 (`ExchangeAdapter` Protocol in `src/adapters.py` + `BinanceAdapter`/`CoinbaseAdapter`, `EXCHANGE` config, default binance byte-identical).
+  2. [x] Pluggable `StorageBackend` + Parquet/DuckDB sink — decouples from Timescale (which Render can't host), makes the demo runnable (M, high). DONE 2026-06-02 (`StorageBackend` protocol + `DuckDBStorage`, `STORAGE_BACKEND` config, default timescale).
+  3. [x] `replay(symbol, start, end)` from store + OHLCV final-bar fix + bounded-buffer/backpressure cap — DONE 2026-06-02 (`Pipeline.replay()` async generator over the StorageBackend read API; `TickNormalizer.flush()`/`flush_all()` so single-trade + final bars emit; `MAX_BUFFER_SIZE` block-then-drop-oldest cap).
 - **options-pricing-calculator** (vs QuantLib/py_vollib/mibian): already beats py_vollib/mibian (American via binomial, dividend yield).
   1. Higher-order Greeks (vanna/volga/charm) — closed-form, ~30 LOC (S, high).
   2. Black-76 futures-options pricer — completes the vollib "core three" (S, high).
-  3. Vectorized/batch pricing API — enables IV chains + a *real* IV surface (M, high). NB: `plot_volatility_surface` is mislabeled — it plots **price** at constant σ; rename or upgrade to a true IV surface. Defer Heston/exotics/SVI (QuantLib-scale).
+  3. [x] Vectorized/batch pricing API — enables IV chains + a *real* IV surface — DONE 2026-06-02
+     (`black_scholes_price_vec` / `greeks_vec` / `implied_volatility_vec` + `solve_iv_surface` /
+     `plot_solved_iv_surface`). Heston/exotics/SVI still deferred (QuantLib-scale).
 - **order-book-simulator** (vs ABIDES/mbt-gym): correct C++ price-time-priority engine, but a black box driven only by `main.cpp`; the Python sim and engine never touch.
-  1. **pybind11 bindings** — foundational; makes the engine programmable, unblocks everything else, lets tests drop subprocess-stdout parsing (M, very high).
+  1. [x] **pybind11 bindings** — DONE 2026-06-02 (engine now programmable from Python; tests dropped subprocess-stdout parsing; FetchContent pybind11 `_orderbook` module re-exported via `python/orderbook/`).
   2. IOC/FOK/post-only order types — pure match-loop variants, no new data structures (S, high).
-  3. Throughput/latency benchmark harness (S–M). Strategic L-effort path to "ABIDES-lite": discrete-event latency clock → agent-based participants (sequence after pybind11). WASM core for the showcase is a separate medium-effort demo win.
+  3. [x] Throughput/latency benchmark harness — DONE 2026-06-02 (`benchmarks/bench.py` drives the engine via the binding; real M2 Pro numbers in the changelog entry). Strategic L-effort path to "ABIDES-lite": discrete-event latency clock → agent-based participants. WASM core for the showcase is a separate medium-effort demo win.
 - **portfolio-optimization-engine** (vs PyPortfolioOpt/riskfolio/skfolio/cvxpy): scipy SLSQP+linprog; all top picks are **additive / API-safe** (the backtester's injected-returns + zero-arg `optimize_*` + `PortfolioResult.weights` contract stays intact).
-  1. True *solved* efficient frontier (sweep existing `optimize_min_vol_target_return`) — replaces the random Dirichlet cloud "toy" gap (S, high).
-  2. `optimize_hrp()` Hierarchical Risk Parity — marquee feature needing no solver, fits scipy-only ethos, slots into the backtester's pattern for free (M, high).
-  3. Ledoit-Wolf covariance shrinkage (opt-in, default off to preserve parity) (S, high). Runner-up: Black-Litterman (M). Defer cvxpy backend (heavy dep, scope creep).
+  1. [x] True *solved* efficient frontier (sweep existing `optimize_min_vol_target_return`) — DONE 2026-06-02 (`solved_efficient_frontier`).
+  2. [x] `optimize_hrp()` Hierarchical Risk Parity — DONE 2026-06-02 (solver-free, scipy `linkage`; ADDITIVE).
+  3. [x] Ledoit-Wolf covariance shrinkage (opt-in, default off to preserve parity) — DONE 2026-06-02 (`calculate_returns(shrinkage=...)`). [x] Runner-up Black-Litterman (M) — DONE 2026-06-02 (`black_litterman.py` + `optimize_black_litterman`). Defer cvxpy backend (heavy dep, scope creep). All four portfolio P2 picks now DONE.
 
 ---
 
 ## Changelog
+
+## 2026-06-02 — main thread (/improve-quant) — MILESTONE: entire P2 feature backlog DONE + wired end-to-end
+- **All P2 feature-comprehensiveness picks across all 5 packages are now implemented, tested, and reachable
+  end-to-end** (CLI/API/UI/sim), on `feature/agent-improvements` (43 commits past the squashed base
+  `9d77a3b`; NOT pushed). Delivered this session across 7 parallel batches of specialist subagents:
+  - **options-pricing** (201 tests): higher-order Greeks (vanna/volga/charm), Black-76 pricer, vectorized
+    batch price/greeks/IV API, true solved IV surface; live chains + Finnhub spot w/ 401 warning + offline.
+  - **portfolio-optimization** (251 tests): solved efficient frontier, Ledoit-Wolf shrinkage (opt-in), HRP,
+    Black-Litterman — all four exposed in CLI/FastAPI (`/optimize/black-litterman` + example); resilient yfinance.
+  - **backtesting** (191 tests): CSV/DataFrame data handlers, 7 wired optimizer objectives, native short
+    selling (opt-in `allow_short`, long-only parity proven), resilient yfinance; CLI `--allow-short/--data-csv/
+    --offline/--objective hrp`; HRP wired into `OptimizationRebalanceStrategy`.
+  - **market-data** (173 tests): pluggable StorageBackend (Timescale + DuckDB), `replay()` feeder, OHLCV
+    final-bar fix, backpressure cap, pluggable ExchangeAdapter (Binance + Coinbase), fail-fast on dead infra.
+  - **cpp/order-book** (53 C++ ctest + 41 Python): IOC/FOK/post-only (TimeInForce), pybind11 bindings,
+    throughput/latency benchmark (~186k orders/s, p50 4.8µs/p99 18µs on M2 Pro), and `simulator.py` now drives
+    the REAL C++ engine through the binding (visualizer renders real engine state).
+- **Deploy posture:** root `render.yaml` now defaults the market-data worker to `STORAGE_BACKEND=duckdb`
+  (Redis + disk only — NO external Timescale for the demo; Timescale stays an opt-in `sync:false` path).
+  Offline flags documented per service. Docs reconciled across all 5 READMEs + showcase (fixed a false
+  Monte-Carlo claim + a portfolio self-contradiction). Showcase builds green.
+- **Verification (all green):** options 201 / portfolio 251 / backtesting 191 / market-data 173 / order-book
+  53 C++ + 41 py = **910 tests**. Cross-package contract (backtester ↔ optimizer, shared `metrics`) intact.
+  ruff + ruff-format + mypy clean across all packages.
+- **Branch hygiene:** the stale `feature/agent-improvements-stale-orphan` was deleted; only
+  `feature/agent-improvements` + `main` remain.
+- **User action:** push `feature/agent-improvements` when ready (nothing pushed, per standing rules); then
+  connect Render Blueprint + Netlify. **Next pass:** optional polish only — dashboard checkboxes for
+  allow_short/hrp, more exchange adapters (Kraken/Bitstamp ~1 class each), a native C++ micro-benchmark, and
+  surfacing the vec IV-surface in the Streamlit app. No formal backlog items remain.
+
+## 2026-06-02 — feature-architect — packages/portfolio-optimization (HRP + Black-Litterman reachable end-to-end)
+- Branch `feature/agent-improvements` (NOT pushed). Wired the library-only `optimize_hrp` /
+  `optimize_black_litterman` into the CLI/analysis, FastAPI demo, and a runnable example — closing the
+  "library-API-only" follow-up the prior BL/HRP passes flagged. Purely ADDITIVE / API-SAFE: NO optimizer
+  math touched, NO existing public signature changed, the zero-arg `optimize_*` contract +
+  `PortfolioResult.weights` + `metrics` parity + the backtester injected-returns path all intact. Scoped
+  `git add` to `packages/portfolio-optimization/...` + this file (two other agents editing backtesting +
+  order-book on this branch in parallel).
+- **HRP in the CLI/analysis (`analysis.py`, `config.py`):** added `"hrp" -> "optimize_hrp"` to
+  `_OBJECTIVE_METHODS` and the `_selected_objectives` single-objective map, and `"hrp"` to
+  `config.OBJECTIVE_CHOICES`. HRP is zero-arg (uses the injected cov), so it slots into `run_analysis`'s
+  uniform `method()` loop exactly like `risk_parity` — `--objective hrp` and inclusion in `all` both work,
+  flow through metrics + Monte Carlo, and `print_report` prints it (its `_make_result` populates
+  sortino/cvar so the existing print path needs no change).
+- **HRP in FastAPI (`api/app.py`):** added `"hrp" -> "optimize_hrp"` to `_OBJECTIVES`, so `POST /optimize`
+  with `objective:"hrp"` returns 200 + weights (the existing `getattr(optimizer, method)()` zero-arg call
+  path is unchanged — no logic duplicated). `/objectives` now lists `hrp`.
+- **Black-Litterman — chose the FastAPI endpoint AS WELL AS an example (the cleaner option both ways):**
+  BL needs views (P/Q) which don't fit the flat argparse `--objective` surface, so it is deliberately NOT a
+  CLI objective (documented in the README). Instead: (1) a NEW typed endpoint `POST /optimize/black-litterman`
+  accepts `views: [{assets:{ticker:loading}, q, confidence?}]` (absolute or relative), optional
+  `market_weights`, `tau`, `risk_aversion`; it translates the payload to `P`/`Q`/`Omega` and calls the
+  EXISTING `optimize_black_litterman` + `black_litterman_returns` (no math duplicated), returning weights
+  plus the `prior_returns` and view-adjusted `posterior_returns`. With no views the posterior == prior
+  (equilibrium-prior max-Sharpe). `confidence` (in (0,1]) scales the default `diag(tau P Sigma P^T)` Omega
+  by `1/confidence` so higher confidence -> tighter uncertainty -> stronger tilt. Refactored the shared
+  inject-returns construction into `_build_optimizer` (DRY, `/optimize` behavior unchanged). (2) NEW
+  runnable `examples/black_litterman_demo.py` shows prior -> bullish AAPL view -> posterior shift ->
+  optimized weights tilting toward AAPL (offline; verified AAPL weight 30.04% -> 44.68%).
+- **Tests (+17, 234 -> 251):** `test_analysis.py` — `--objective hrp` end-to-end through `run_analysis`
+  (weights sum to 1, long-only, objective tag, metrics+MC+primary all keyed on hrp), `all` includes hrp,
+  `print_report` emits "HRP"; `_selected_objectives("hrp")` + `all`-covers-hrp + method-map. `test_config.py`
+  — `hrp` is a valid objective choice. NEW `test_api.py` (FastAPI `TestClient`, no network) — `/objectives`
+  lists hrp+black_litterman; `/optimize` hrp -> 200 + weights sum to 1 + long-only; unknown objective 422;
+  BL no-views posterior==prior + weights sum to 1; BL bullish view raises AAPL posterior AND weight; higher
+  confidence pulls posterior nearer q; relative view accepted; market_weights accepted; unknown view/market
+  ticker -> 422; bad returns shape -> 422.
+- **Gate (REAL numbers):** `python -m pytest` -> **251 passed** (was 234), coverage **96.53%** (gate
+  `--cov-fail-under=90` met; `analysis.py` 98%, `config.py` 100%, `black_litterman.py` 100%, `optimizer.py`
+  98% — unchanged). `api/` is outside the `--cov` source (`[tool.coverage.run] source =
+  ["portfolio_optimization_engine"]`), so `test_api.py` validates behavior without diluting the gate.
+  `ruff check .` clean, `ruff format --check` clean (32 files), `mypy` clean (11 source files; also ran
+  `mypy api/app.py` standalone — clean).
+- **Docs:** README CLI `--objective` choices (+hrp), a BL-is-not-a-CLI-objective callout, the API table
+  (+`/optimize/black-litterman` row, supported-objectives line +hrp, view payload shape), the Quick Start
+  examples block + project tree (+`black_litterman_demo.py`).
+- **User actions:** none beyond eventual push. **Follow-ups:** could add a `"black_litterman"` branch to the
+  backtester's `OptimizationRebalanceStrategy` (works today via the zero-arg contract; needs views to differ
+  from equilibrium); a Streamlit/CLI views form is possible but low value. All four portfolio P2 picks remain
+  DONE — this pass only surfaced them.
+
+## 2026-06-02 — feature-architect — packages/backtesting (CLI reachability: short/CSV/offline + HRP objective)
+- Branch `feature/agent-improvements` (NOT pushed). Made recently-landed backtesting capabilities reachable
+  end-to-end from the CLI (they existed in the library but weren't wired into `main.py`). Purely ADDITIVE:
+  every new flag defaults to the prior online, long-only behavior, and `python main.py` with no args still
+  runs the original four-strategy DuckDB demo (`run_demo`) byte-for-byte. Cross-package contract intact —
+  shared `metrics` math untouched, the optimizer used only via its existing zero-arg public API
+  (`optimize_hrp()`), and the portfolio-optimization package NOT modified. Scoped `git add` to
+  `packages/backtesting/...` + this file only (two other agents editing portfolio-optimization / order-book
+  in parallel on this branch).
+- **`main.py` refactor (testable, behavior-preserving):** the original `main()` body became `run_demo()`;
+  `main(argv=None)` now parses args via a new `build_parser()` and dispatches to `run_demo()` when no
+  `--strategy` is given (unchanged path) or to `run_single(args)` for one configurable backtest. Arg handling
+  is factored into importable pure functions — `build_data_handler`, `build_portfolio`, `build_strategy`,
+  `run_single` — so the CLI is unit-testable without a live network.
+- **New CLI flags (all default to prior behavior):**
+  - `--allow-short` → threads into `Portfolio(allow_short=True)` for a long/short backtest (default off).
+  - `--data-source {yfinance,csv}` + `--data-csv PATH` (+ `--csv-combined`) → loads OHLCV via the existing
+    `CSVDataHandler` (per-ticker `<dir>/<TICKER>.csv` by default, or one combined file with a `symbol`
+    column under `--csv-combined`) instead of always hitting yfinance. `--data-csv` implies the csv source;
+    `--data-source csv` without a path raises a clear error.
+  - `--offline` → drives a deterministic run off the bundled fixture (sets `BACKTESTING_OFFLINE` for the
+    `run_single` scope so BOTH the no-store handler path AND the DuckDB-store fetch path serve the fixture;
+    the env var is restored in a `finally`, verified non-leaking by test). Also threaded into the
+    `YFinanceDataHandler(offline=...)` arg.
+  - `--strategy {sma,mean_reversion,momentum,optimize}` selects a single strategy; `--objective` (incl.
+    `hrp`), `--lookback`, `--rebalance-freq`, `--target`, `--tickers`, `--start`, `--end`, `--capital` are
+    the universe/window knobs.
+- **HRP wired into `OptimizationRebalanceStrategy`:** added an `elif self.objective == "hrp":
+  result = opt.optimize_hrp()` branch to `_compute_targets` — uses ONLY the optimizer's existing injected-cov
+  zero-arg API (no portfolio-optimization edits). HRP is solver-free, long-only, fully-invested, so emitted
+  weights are always backtester-executable. **Black-Litterman deliberately SKIPPED** in the switch and
+  documented why: it needs investor views (P/Q) to differ from the equilibrium prior, and this walk-forward
+  strategy has no view-generation mechanism — with no views BL collapses to the prior, so it would add weight
+  for no behavioral difference.
+- **Dashboard:** left UNCHANGED (noted, not done). The Dash objective dropdown is driven by `OBJECTIVE_TO_KEY`
+  which ALSO feeds the optimization-analysis path (`run_analysis` + `_MARKER`), so adding `hrp` there would
+  require touching the analysis/marker code — outside backtesting-only scope and higher-risk with parallel
+  agents. The CLI is the clean in-scope reachability path; an `--allow-short` checkbox would likewise require
+  re-wiring the tightly-coupled callback signature, so it's deferred.
+- **Tests (`tests/test_cli.py` NEW: +14; +2 HRP tests in `test_data_handlers.py`) → 175 → 191.** No live
+  network (CSV on `tmp_path`, the offline fixture, importable builders): defaults preserve long-only/yfinance/
+  online; `--allow-short` builds a short-enabled `Portfolio` + capital threaded; `--data-csv` builds a
+  `CSVDataHandler` and runs a full backtest off disk (per-ticker AND combined); `--data-source csv` without a
+  path raises; `--offline` sets the handler flag, two runs are byte-identical (deterministic equity curve),
+  and the env var doesn't leak; `--objective hrp` parses + an HRP optimize backtest runs end-to-end > 60 bars;
+  and HRP at the strategy level returns a valid long-only simplex (sums to 1, all >= 0) + a full HRP backtest
+  keeps positions non-negative.
+- **Gate (REAL numbers):** `python -m pytest` → **191 passed** (was 175), coverage **89.20%** (gate
+  `--cov-fail-under=80` met; `data_handler.py` 96%, `portfolio.py` 97%, `strategy.py` 88%; `main.py` is
+  outside the `--cov=src` source so the CLI is test-exercised but not coverage-counted). `ruff check .` clean,
+  `ruff format --check .` clean (23 files), `mypy main.py src` clean (14 files).
+- **Docs:** README Quick Start gained a "Configurable single backtest (CLI flags)" subsection (examples +
+  flag table + the CSV convention) and `hrp` added to the MPT objective list.
+- **User actions:** none beyond eventual push. **Follow-ups:** optional dashboard `--allow-short` checkbox +
+  `hrp` dropdown option (needs the shared `OBJECTIVE_TO_KEY`/`run_analysis` path extended first); a
+  short-friendly demo strategy; expose `--exchange`-style parity knobs if more sources are added.
+
+## 2026-06-02 — feature-architect — cpp/order-book (simulator now drives the LIVE C++ engine end-to-end)
+- Branch `feature/agent-improvements` (NOT pushed). Closed the last open order-book glue item: the Python
+  simulation layer now drives the REAL C++ matching engine through the pybind11 binding, and the
+  visualizer renders that real engine state. NO C++/binding/CMake changes — Python + tests + README only.
+  Scoped `git add` to `cpp/order-book/...` + this file.
+- **`python/simulator.py` rewritten:** the old pure-Python toy (generated order dicts → `orders.json`, no
+  matching) is replaced by two clear pieces with ONE source of truth (the C++ engine):
+  - `MarketSimulator.generate_random_orders(n, use_tif=False)` — a deterministic flow *generator* only
+    (no matching). ~80% LIMIT / 20% MARKET, both sides, prices around a `random.gauss` drifting mid;
+    `use_tif` sprinkles IOC/FOK/POST_ONLY onto a minority of LIMIT orders. Dropped the numpy dependency
+    (now `random`-only, still reproducible via `random.seed`). `save_orders` JSON dump kept for convenience.
+  - `EngineSimulator(symbol, depth_levels).run(flow)` — submits each order via `orderbook.OrderBook.add_order`
+    (the compiled binding), accumulates every fill the ENGINE returns, samples the live spread
+    (`get_best_bid`/`get_best_ask`) each step, and reads the final depth ladders + best bid/ask straight off
+    the engine. Returns a `SimulationResult` dataclass (trades/spreads/bids/asks/best_bid/best_ask as plain
+    dicts so the visualizer/JSON need no binding types). `simulate(...)` one-shot helper + a `main()` CLI
+    (`--orders/--symbol/--seed/--tif/--plot DIR`). The matching is now done ENTIRELY by C++ — no Python book.
+- **`python/visualizer.py`:** existing dict-based `plot_depth_chart`/`plot_trade_tape`/`plot_spread_over_time`
+  unchanged (their dict schema already matches `SimulationResult` output). Added `plot_simulation(result,
+  out_dir=None)` that renders all three charts directly from a real-engine `SimulationResult` (depth always;
+  tape/spread when data present), headless-safe (Agg). `--plot` wires the CLI to it.
+- **Tests:** `tests/test_simulator_engine.py` NEW (+14, 27→41) — drives the binding end-to-end and asserts:
+  real non-empty trades + the `best_bid <= best_ask` invariant; depth ladders sorted (bids desc / asks asc),
+  best bid/ask agree with ladder tops, every level qty>0 / order_count>=1, spread series non-negative; a
+  hand-built crossing matched against the C++ output (price/qty/buyer/seller ids + 40 resting remainder);
+  TIF flow runs through the engine; all four TIFs map; empty flow; flow-generator invariants (market=0
+  price, reproducible, `use_tif` emits non-GTC, market stays GTC); visualizer renders real output headless
+  (all charts written; show-branch no-outdir; empty book renders depth only); and the CLI `main()` summary +
+  `--plot` paths. `test_python_viz.py` updated (TestSimulator kept for the generator; added an
+  `importorskip("orderbook")` since `simulator` now imports the binding at module load).
+- **Build/gates (REAL numbers, clean build):** `cmake -S . -B build && cmake --build build` green (demo +
+  GoogleTest + `_orderbook` module). `ctest --test-dir build` → **53/53 passed** (0.45s). `python -m pytest`
+  → **41 passed**, coverage **99.03%** (gate `--cov-fail-under=80`; `simulator.py` 98%, `visualizer.py` 100%).
+  `ruff check`/`ruff format --check` clean on changed Python. Live demo: 500 orders (seed 42) → 297 real
+  fills (vol 21,645), best_bid 150.51 ≤ best_ask 150.67, 10 resting levels each side — all from the C++ engine.
+- **Retired:** the pure-Python order-flow-to-JSON-only path as the "simulation" — there is no longer any
+  Python-side matching; the generator remains but matching is delegated to the C++ engine via the binding.
+- **User actions:** none beyond eventual push. **Follow-ups:** all P2 order-book picks DONE. Optional: a WASM
+  core for an in-browser showcase demo; stop/stop-limit/iceberg remain intentionally out of scope.
+
+## 2026-06-02 — docs-writer — monorepo-wide README + showcase reconciliation (docs-only)
+- Branch `feature/agent-improvements` (NOT pushed). Documentation-only pass after the P2 feature
+  backlog landed: reconciled every package README + the showcase so feature lists, badges (test
+  counts), and the "vs <equivalent>" sections match what now EXISTS. NO source/tests/render.yaml
+  touched. Scoped `git add` to README/showcase/this-file paths only (a deploy-engineer is editing
+  render.yaml/DEPLOY on this branch in parallel). Re-confirmed test counts by `pytest --co` (NOT
+  trusting the prompt): options **201**, portfolio **234**, backtesting **175**, market-data **173**,
+  order-book **53 C++ (ctest) + 27 Python** — all match.
+- **packages/options-pricing/README.md:** Tests badge 138→**201** (+ 3 prose "138 tests" mentions);
+  removed a stray `</content></invoke>` corrupting the file tail; added a note that a set-but-rejected
+  Finnhub key (401/403) logs one actionable warning then falls back (matches the implemented behavior).
+  Higher-order Greeks / Black-76 / `*_vec` batch API / solved IV surface / live chains were already
+  documented by the per-feature pass — verified each signature against `src/black_scholes.py` +
+  `src/greeks_visualizer.py`.
+- **packages/portfolio-optimization/README.md:** added Tests (**234**) + Coverage badges (had none);
+  fixed the value-prop line (now: solved frontier, 7 objectives incl. HRP, Black-Litterman, Ledoit-Wolf).
+  **Key accuracy fix:** the "vs" prose paragraphs CONTRADICTED the table/features — they still said the
+  engine does NOT do Black-Litterman/HRP/clustering and that the frontier is "not a swept convex
+  frontier." Rewrote to state both the Dirichlet cloud AND the true `solved_efficient_frontier` exist,
+  and moved HRP/BL/Ledoit-Wolf into "does well." Stale "147 tests / ~95%" → **234 / ~96%** (tree +
+  Testing section). Confirmed CLI `--objective` choices + FastAPI `/objectives` are library-only for
+  HRP/BL (correctly NOT claimed in the CLI/API doc sections — those stay sharpe/min_vol/risk_parity/
+  sortino/min_cvar).
+- **packages/backtesting/README.md:** added Tests (**175**) + Coverage badges; expanded the MPT
+  Integration bullet + the walk-forward snippet's `objective` comment from 4 → the **7** objectives the
+  strategy actually accepts (sharpe/min_vol/min_cvar/risk_parity/sortino/max_return_target_vol/
+  min_vol_target_return). Short selling, CSV/DataFrame handlers, resilient yfinance/offline were already
+  documented by the per-feature pass.
+- **packages/market-data/README.md:** added Tests (**173**) + Coverage badges; Dev section test count
+  76→**173**; updated the value-prop blurb (Binance+Coinbase, pluggable storage, replay). **Accuracy
+  fix:** the "vs cryptofeed" table + "what it doesn't do" prose still said "one Binance-style stream" /
+  "Redis + TimescaleDB" only — updated to Binance+Coinbase adapters, pluggable Timescale/DuckDB, and a
+  new Replay row. (Left the default-path mermaid as the illustrative single-sink view; DuckDB/replay are
+  fully covered in prose below it.)
+- **cpp/order-book/README.md:** removed a stray `</content></invoke>` tail; added a combined
+  "53 C++ | 27 Python" Tests badge; trimmed the Roadmap — the throughput/latency benchmark item was DONE
+  (`benchmarks/bench.py`, documented in Quick Start step 4) so it's removed; the "wire simulator through
+  the binding" item is GENUINELY still open (verified `python/simulator.py` does NOT import `orderbook`)
+  so it stayed, reframed as remaining visualizer glue, + a WASM line. TIF/pybind11/benchmark numbers
+  already documented — reused the existing real M2 Pro numbers, fabricated nothing.
+- **apps/showcase-site/src/projects.js:** rewrote all 5 project descriptions + "vs" notes to the
+  expanded feature sets. **Biggest accuracy fix:** the options entry claimed **"Monte-Carlo option
+  pricing"** — the package has NO Monte Carlo (BS + binomial + Greeks + IV only); removed it and
+  replaced with the real capabilities (American binomial, higher-order Greeks, Black-76, vectorized IV
+  surface, live chains). Order-book "**35** GoogleTest" → 53 C++ + 27 Python + pybind11 + TIF + bench
+  numbers. Portfolio: added HRP/BL/Ledoit-Wolf/solved-frontier. Backtesting: short selling + CSV/DataFrame
+  handlers + events/sec. Market-data: Coinbase + DuckDB + replay. Kept all `demoUrl` placeholders
+  unchanged (deployment is separate). `npm run build` → **green** (vite, 5 modules, ~78ms).
+- **Honored AGENTS domain caveats:** no exotics/Heston/SVI/MC claimed for options; vectorbt event-driven
+  flagged PRO; mbt-gym described as model-based (not a matching engine); py_vollib/mibian European-only.
+- **Nothing left contradicting code.** Non-doc follow-ups (future feature pass, not drift): HRP/Black-
+  Litterman are library-API only (not yet in the portfolio CLI/FastAPI or the backtester objective
+  switch) — correctly reflected as such; the order-book simulator→binding→visualizer glue is unwired
+  (kept on Roadmap). README CI/badge GitHub slug is `quant-lab` (pre-monorepo name) across all repos —
+  cosmetic, left as-is to avoid scope creep.
+
+## 2026-06-02 — deploy-engineer — root render.yaml + deploy docs (no-external-DB cloud demos)
+- Branch `feature/agent-improvements` (NOT pushed). Config + DOCS ONLY — no package source/tests touched.
+  Wired the recently-added "runs-without-external-infra" knobs into the root `render.yaml` so every cloud
+  demo is runnable and degrades gracefully. Verified each env var name/default against the real
+  `config.py`/source before writing it. Scoped `git add` to `render.yaml`, `README.md` (Deploy section),
+  `packages/backtesting/DEPLOY.md`, `packages/market-data/README.md` (deploy sections), and this file only
+  (a docs-writer agent is editing package READMEs/showcase in parallel on the same branch — did NOT
+  `git add -A`).
+- **market-data worker — NO external DB by default (the headline change):** set `STORAGE_BACKEND=duckdb`
+  + `DUCKDB_PATH=data/marketdata.duckdb` on the `market-data-pipeline` worker, so the Blueprint deploys a
+  worker that runs on the managed Redis (already wired via `fromService`) + the container's writable disk
+  alone — no external TimescaleDB. KEPT `DATABASE_URL` as a documented `sync:false` option for anyone who
+  switches to `STORAGE_BACKEND=timescale`. Also surfaced `EXCHANGE=binance` and `MAX_BUFFER_SIZE=1000` as
+  explicit (editable) env vars. Documented that the free-plan disk is EPHEMERAL (fine for a live-streaming
+  demo; data lost on redeploy — use a persistent disk or Timescale for durability). Verified names against
+  `packages/market-data/src/config.py` (`STORAGE_BACKEND`/`DUCKDB_PATH`/`EXCHANGE`/`MAX_BUFFER_SIZE`).
+- **OFFLINE-flag decisions (per service, documented tradeoff mirroring the existing options choice):**
+  - `options-pricing`: UNCHANGED — left `OPTIONS_PRICING_OFFLINE` OFF (commented stub), the app already
+    falls back to the bundled chain per-request, so live works when egress allows.
+  - `backtesting`: added a commented-out `BACKTESTING_OFFLINE` stub, default OFF — BUT documented the key
+    difference: the backtesting data layer RAISES `MarketDataError` on a failed yfinance fetch (no
+    per-request fixture fallback like options has); the dashboard surfaces that as an in-UI error (doesn't
+    500) rather than results. So the docs recommend flipping `BACKTESTING_OFFLINE=1` ON if a guaranteed-
+    deterministic showcase is wanted. The env flag overrides the dashboard's `offline=False` arg at the
+    data layer (verified in `src/market_data.py::_offline_enabled`).
+  - `portfolio-optimization`: NO data flag — the FastAPI demo optimizes a returns matrix POSTed by the
+    caller (verified `api/app.py` does no network fetch), so it is deterministic by construction.
+    `PORTFOLIO_OFFLINE` only affects the library/CLI's own yfinance fetches, not the deployed service —
+    documented as such in render.yaml.
+- **Docs updated:** root `README.md` Deploy section (no-external-DB posture for all four services + the
+  exact dashboard secrets: `FINNHUB_API_KEY` optional, `DATABASE_URL` only for Timescale);
+  `packages/backtesting/DEPLOY.md` (new "Live market data & the OFFLINE flag" section, mirrors options);
+  `packages/market-data/README.md` deploy sections (DuckDB-default docker run + Render steps, ephemeral-
+  disk caveat, optional-Timescale path, and the "without live infra" / one-Redis-demo callouts rewritten —
+  they previously claimed Timescale was a hard dependency).
+- **Validation:** `python3 -c "import yaml; yaml.safe_load(open('render.yaml'))"` parses clean; all four
+  services present; `market-data` envVars include STORAGE_BACKEND=duckdb. `import api.app` (portfolio)
+  imports clean. Docker build NOT run (not exercised this pass; Dockerfile unchanged from the verified
+  prior pass). NO deploy/remote resources created.
+- **User must set in the Render dashboard:** (1) `FINNHUB_API_KEY` — OPTIONAL, options live spot (falls
+  back to yfinance if unset); (2) `DATABASE_URL` — ONLY if switching market-data to
+  `STORAGE_BACKEND=timescale` (default DuckDB needs nothing). Plus the usual: push the repo to GitHub,
+  Render → New → Blueprint → select repo (the `market-data-pipeline` + `portfolio-optimization-api`
+  services have `autoDeploy:false`, so trigger their first deploy manually), and Netlify → connect repo
+  (builds `apps/showcase-site` via root `netlify.toml`). Then wire the showcase "Live demo" buttons to the
+  resulting `*.onrender.com` URLs.
+- **Follow-ups:** none required for runnable demos. Optional: expose `--offline`/`EXCHANGE` through more
+  CLI entry points; attach a Render persistent disk to make the DuckDB market-data store durable.
+
+## 2026-06-02 — feature-architect — packages/backtesting (native short selling, opt-in)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 backtesting pick #3 — native short
+  selling, the biggest real gap vs backtrader/zipline. Fully ADDITIVE + OPT-IN behind
+  `Portfolio(allow_short=True)` (default `False`). The cross-package contract is intact: the shared
+  `metrics` math is untouched (analytics still delegates Sharpe/Sortino/drawdown to
+  `portfolio_optimization_engine.metrics`), the optimizer API is not touched (this change lives entirely
+  in the execution/portfolio/analytics layer), and a representative LONG-ONLY backtest is proven
+  byte-identical (all 148 prior tests still pass unchanged). Scoped `git add` to `packages/backtesting/...`
+  + this file only (two other agents committing in parallel).
+- **portfolio.py:** new `allow_short` ctor flag. When off, `process_fill` runs the EXACT original
+  long-only branch (byte-identical). When on, it dispatches to a new `_apply_signed_fill` that handles all
+  signed transitions: open/extend from flat (set entry), same-side magnitude increase (magnitude-weighted
+  average entry), reduce toward flat (keep open-side entry), close-to-flat (drop tracking), and flip
+  through zero (a SELL larger than the open long closes it and opens a short for the remainder, entry reset
+  to the flip price). Cash accounting is direction-mechanical and already correct for signed qty: a SELL
+  always credits proceeds (short sale credits cash), a BUY always debits (cover debits cash); equity
+  `cash + Σ signed_qty*price` marks a short to market inversely with no special-case. `check_exits` now
+  also handles shorts (qty<0) with INVERTED triggers — stop-loss when price rises above entry, take-profit
+  when it falls below, trailing off the lowest price seen — emitting a buy-to-cover; the long branch (qty>0)
+  is unchanged and qty<0 is still skipped when `allow_short` is off.
+- **sizing.py:** new `_directional_order` (long/short) + an `_order_for` dispatcher; the three quantity
+  sizers (`FixedFractional`/`PercentOfEquity`/`RiskBased`) now call `_order_for`, which routes to the
+  existing `_long_only_order` when `allow_short` is off (byte-identical) and to the signed builder when on
+  (SELL opens/extends a short, BUY covers; opening/extending is capped to buying power, covering is not).
+  `TargetWeightSizer` now honors a negative `target_weight` only when `allow_short` is on, else clamps it
+  to 0 (flat) — preserving the long-only behavior (no repo strategy emits negative weights, so this is a
+  no-op for existing runs).
+- **analytics.py — signed FIFO (the critical correctness point):** `PerformanceAnalytics` gained an
+  `allow_short` flag (passed through from `Backtest.run` via `portfolio.allow_short`). When off,
+  `_compute_round_trip_pnl` runs the ORIGINAL long-only matching verbatim (BUYs open lots, SELLs close FIFO
+  with `(sell-entry)*qty`, a naked SELL is dropped). When on, it runs `_round_trip_pnl_signed`: a per-symbol
+  FIFO of signed lots where a same-direction trade opens/extends a lot and an opposite trade closes lots
+  FIFO — closing a LONG lot earns `(exit-entry)*qty`, closing a SHORT lot earns `(entry-cover)*qty` (sold
+  high/covered low = profit) — with any remainder after the book empties opening a fresh lot on the other
+  side (handles long->flat->short flips). A pure-long sequence yields the identical result with the flag on
+  (test-asserted).
+- **Tests (`tests/test_short_selling.py`, NEW): +27 (148 -> 175).** Short cash/position accounting
+  (credit on open, debit on cover, partial cover keeps entry, weighted-avg on extend); inverse
+  mark-to-market while short + gross exposure abs-value; long->flat->short flip cash+entry; short-side
+  stop-loss/take-profit/no-trigger + the defensive allow_short-off skip; signed FIFO (clean short profit,
+  short loss, multiple short lots, long-then-flip-to-short, long-only unchanged with flag on); sizer-level
+  signed behavior (PercentOfEquity opens/blocks short, cover uncapped, LIMIT passthrough, zero-buying-power
+  cap) + TargetWeight negative-weight open/clamp; end-to-end short backtest profits in a falling market +
+  default-off clips the naked sell; and the PARITY block (default `allow_short` False, metrics echo the
+  shared module exactly, identical-inputs -> byte-identical equity curve + trade frame + stats).
+- **Gate (REAL numbers):** `python -m pytest` -> **175 passed** (was 148), coverage **89.17%** (gate
+  `--cov-fail-under=80` met; `portfolio.py` 97%, `analytics.py` 77%, `sizing.py` 82%). `ruff check .` clean,
+  `ruff format --check` clean (22 files), `mypy src` clean (13 files). README updated (Features bullet,
+  Technical Highlights, a "Short selling (opt-in)" usage subsection, and a short-selling row in the vs.
+  table).
+- **Follow-ups:** all three P2 backtesting picks now DONE. Optional: expose `allow_short` through
+  `main.py`/the Dash dashboard; add a short-friendly demo strategy (e.g. a long/short MA crossover that
+  flips on the cross-down); margin interest already accrues on negative cash, so a leveraged long/short
+  book is supported but untested end-to-end at the dashboard layer.
+
+## 2026-06-02 — feature-architect — packages/market-data (pluggable ExchangeAdapter + Coinbase)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 market-data pick #1 — the headline
+  gap vs cryptofeed/ccxt-pro: a pluggable `ExchangeAdapter` protocol + a 2nd exchange. ADDITIVE: the
+  Binance path is byte-identical by default (URL + parsed Trade unchanged). Left the prior passes'
+  `StorageBackend` / `replay()` / backpressure cap intact. Scoped `git add` to `packages/market-data/...`
+  + this file only.
+- **Protocol surface (`src/adapters.py`)** — new `runtime_checkable` `ExchangeAdapter` Protocol capturing
+  the ONLY three things that vary per venue: `name: str`; `ws_url(symbols) -> str` (full connect URL);
+  `subscribe_payload(symbols) -> dict | None` (JSON to send after connect, or `None` when streams are
+  URL-embedded); `normalize_trade(raw) -> Trade | None` (parse one raw WS msg into the EXISTING normalized
+  `Trade` — lowercased symbol, float price/qty, `buy`/`sell` aggressor side, UTC-aware timestamp,
+  `exchange` tag; non-trade/malformed → None, logged not raised). `build_adapter(name)` factory (raises on
+  unknown).
+- **`BinanceAdapter`** — factored the existing Binance logic out of `normalizer.py` unchanged: combined
+  `@trade` streams embedded in the path, no subscribe, `m` ("buyer is maker") → aggressor side
+  (`m=true`→"sell"). Built from `WS_URL` so the URL is byte-identical to before. Now also ignores a
+  non-`trade` `e` event type if present.
+- **2nd exchange = `CoinbaseAdapter`** (Coinbase Exchange `matches` channel, keyless public).
+  URL = fixed `wss://ws-feed.exchange.coinbase.com`; subscribe = `{"type":"subscribe","channels":
+  [{"name":"matches","product_ids":[...]}]}`. Parsed message shape (verified against Coinbase docs):
+  `{"type":"match"|"last_match","trade_id","sequence","maker_order_id","taker_order_id","time"(ISO-8601 Z),
+  "product_id":"BTC-USD","size","price","side"}`. Two normalization decisions, documented in code:
+  (1) Coinbase `side` is the **maker** side → flipped to the **taker/aggressor** side to stay consistent
+  with Binance's "who crossed the spread" (`side="sell"` maker → normalized `"buy"`); (2) symbols
+  round-trip `btcusd`/`btc-usd` ⇄ `BTC-USD` (dash-insert on subscribe, strip+lower on parse). Subscription
+  acks / heartbeats parse to None.
+- **Wiring** — `normalizer.TickNormalizer(adapter=None)` now delegates trade parsing to the adapter
+  (defaults to `BinanceAdapter()` so a no-arg normalizer is unchanged); the OHLCV roll-up is unchanged and
+  adapter-agnostic. `websocket_client.MarketDataClient(ws_url, max_retries, adapter=None)` defaults to
+  `BinanceAdapter(ws_url)` (existing tests/URL unchanged), uses `adapter.ws_url(symbols)` and sends
+  `adapter.subscribe_payload(symbols)` as JSON after connect when not None. `config.Config.exchange`
+  (env `EXCHANGE`, default `"binance"`, lowercased). `pipeline.build_exchange_adapter(config)` returns a
+  `BinanceAdapter(config.ws_url)` for binance (byte-identical) else `build_adapter(config.exchange)`;
+  `Pipeline.__init__` builds the adapter once and shares it across client + normalizer.
+- **Tests (`tests/test_adapters.py`, NEW): +39 (134 → 173), no live network.** Protocol conformance
+  (both adapters `isinstance ExchangeAdapter`; `build_adapter` select/case/unknown-raise); Binance exact
+  Trade, m→sell, no-`e`-key still parses, non-trade event ignored, malformed→None, URL embed + trailing-
+  slash strip, no subscribe; Coinbase exact Trade (maker-sell→taker-buy), maker-buy→taker-sell, last_match,
+  ack/heartbeat ignored, malformed→None, naive-time→UTC, fixed feed URL, subscribe product mapping +
+  already-dashed + short-symbol passthrough + product_id round-trip; normalizer delegation (default Binance,
+  injected Coinbase, OHLCV roll-up adapter-agnostic); config default=binance + lowercasing + `build_exchange_
+  adapter` binance-uses-WS_URL/coinbase/unknown-raise + Pipeline shares one adapter; client drives adapter
+  (default Binance URL, Coinbase feed URL + subscribe JSON sent, Binance sends nothing); and an END-TO-END
+  Coinbase run driving `MarketDataClient` with a FakeWebSocket replaying canned match messages (+ ack) →
+  asserts cache/publish/batch-flush and taker-normalized sides. Added `send()` to the conftest FakeWebSocket.
+- **Gate (REAL numbers):** `python -m pytest` → **173 passed** (was 134), coverage **98.46%** (gate
+  `--cov-fail-under=85`; `adapters.py` 97% — the 3 uncovered lines are the Protocol `...` method stubs,
+  `normalizer.py` 95%, `pipeline.py` 99%, `websocket_client.py` 100%). `ruff check .` clean, `ruff format
+  --check` clean (25 files), `mypy src` clean (10 files). README (Features bullet, data-flow steps 1–2,
+  `EXCHANGE` config row, new "Exchange adapters" subsection, Project Structure), `.env.example`, and this
+  ledger updated.
+- **User actions:** none beyond eventual push. **Follow-ups:** ALL P2 market-data picks (#1 adapters, #2
+  StorageBackend/DuckDB, #3 replay/backpressure) are now DONE. Optional next venues (Kraken/Bitstamp) are
+  each ~one adapter class; could surface `--exchange` through `main.py` for parity with `--symbols`.
+
+## 2026-06-02 — feature-architect — packages/portfolio-optimization (Black-Litterman expected-returns model)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented the P2 portfolio runner-up — Black-Litterman
+  (Black & Litterman, 1992) — closing out ALL FOUR portfolio P2 picks (solved frontier, HRP, Ledoit-Wolf,
+  BL). Purely ADDITIVE / API-SAFE: no existing public signature changed, no `metrics` math touched, the
+  backtester's injected-returns + zero-arg `optimize_*` + `PortfolioResult.weights` contract intact. numpy
+  only (no PyPortfolioOpt/cvxpy/sklearn). Mirrors `covariance.py`: a standalone helper module + a thin
+  optimizer entry point. Builds on the just-added Ledoit-Wolf `covariance.py` / HRP `optimize_hrp` (read both
+  first).
+- **New `black_litterman.py`** (numpy-only helper module): `market_implied_prior(cov, w_mkt, risk_aversion)`
+  returns the equilibrium (prior) excess returns via reverse optimization `Pi = delta * Sigma @ w_mkt`.
+  `black_litterman(cov, w_mkt=None, P=None, Q=None, *, omega=None, tau=0.05, risk_aversion=2.5, pi=None)`
+  returns the posterior expected-returns vector via the BL master formula:
+  `E[R] = [ (tau*Sigma)^-1 + P^T Omega^-1 P ]^-1 [ (tau*Sigma)^-1 Pi + P^T Omega^-1 Q ]`
+  (solved with `np.linalg.solve`). Neutral prior defaults to **equal-weight** when `w_mkt` is omitted;
+  the view-uncertainty `Omega` defaults to the standard `diag(tau * P Sigma P^T)` (each diagonal entry
+  floored at 1e-12 so a zero-variance view can't make Omega singular); `pi=` lets a caller inject the prior
+  directly and skip reverse optimization. With **no views** (`P`/`Q` omitted, empty, or zero-confidence /
+  huge `Omega`) the posterior equals the prior `Pi` exactly — the documented default behavior. Full input
+  validation (square cov, `w_mkt`/`pi` length, `P` columns == n, `Q` length == k views, `Omega` shape k×k).
+- **Two optimizer entry points** in `optimizer.py` (after `optimize_hrp`):
+  - `black_litterman_returns(P=None, Q=None, *, w_mkt=None, omega=None, tau=0.05, risk_aversion=2.5,
+    pi=None)` → a pandas **Series indexed by `self.tickers`** of the posterior annualized excess returns
+    (uses only `self.cov_matrix`; raises the usual "Call calculate_returns() first" when cov is unset).
+  - `optimize_black_litterman(P=None, Q=None, *, w_mkt=..., omega=..., tau=..., risk_aversion=..., pi=...,
+    **cons)` → computes the posterior, **temporarily** sets it as `self.mean_returns`, runs the EXISTING
+    max-Sharpe SLSQP solve, builds the result through the shared `_make_result` (so return/vol/Sharpe/
+    Sortino/CVaR all flow through the identical `portfolio_*` path every objective uses), then **restores
+    `self.mean_returns`** in a `finally` so the call has no lingering side effect. Accepts the same
+    constraint kwargs (`min_weights`/`max_weights`/`allow_short`/`groups`); long-only weights sum to 1 by
+    default; `objective == "black_litterman"`. Zero-arg-callable, so the backtester could drive it like any
+    other objective.
+- **Contract preserved:** the reported `expected_return` reflects the BL POSTERIOR (correct by design — the
+  optimization and its metrics are on the posterior); `volatility` comes from the unchanged covariance via
+  the same `portfolio_volatility` method, so it matches the shared `metrics.annualized_volatility` of the
+  realized series to ~1e-6. Nothing on the default path calls BL, so parity with the backtester is intact.
+- **Hand-checked 2-asset case:** `Sigma=[[.04,.006],[.006,.09]]`, `w=[.5,.5]`, `delta=2.5` →
+  `Pi=[0.0575, 0.12]`; a bullish absolute view `Q=Pi[0]+0.05` on asset 0 raises its posterior to ~0.0825;
+  zero-confidence (`Omega=1e12`) collapses back to `Pi`.
+- **Tests (`tests/test_black_litterman.py`, NEW): +28 (206 -> 234).** Helper: prior formula vs hand value,
+  no-views==prior, default w_mkt==equal-weight, zero-confidence==prior, empty/missing views==prior, bullish
+  view shifts posterior up / bearish down, default `Omega`==`diag(tau P Sigma P^T)` (custom-equals-default
+  posterior match), tighter `Omega` pulls posterior nearer the view, `pi=` override, finite/sane 3-asset,
+  DataFrame cov accepted, and all six validation raises. Entry point: before-calculate raises (both methods),
+  valid long-only weights summing to 1 + `objective` tag, no-views posterior Series == reverse-opt prior,
+  bullish view tilts optimized weight UP vs no-view and raises posterior return, `mean_returns` restored
+  after the call, metrics parity (posterior return, cov-vol vs shared metrics, internal Sharpe consistency),
+  `max_weights` constraint respected, the hand-checkable 2-asset prior + bearish tilt, and single-asset
+  degenerate (-> 1.0).
+- **Gate (REAL numbers):** `python -m pytest` -> **234 passed** (was 206), coverage **96.45%** (gate
+  `--cov-fail-under=90` met; `black_litterman.py` **100%**, `optimizer.py` 98% — the 4 missed lines/branches
+  are the pre-existing CVaR-LP-fail / `_solve`-fail / target-cap paths, not BL). `ruff check .` clean,
+  `ruff format --check` clean (30 files), `mypy` clean (11 source files).
+- **Docs:** README Features bullet, "vs. the popular tools" row (now "Black-Litterman + HRP"), a Usage
+  snippet (posterior Series + `optimize_black_litterman` + no-views prior), and the project-structure tree
+  updated.
+- **User actions:** none beyond eventual push. **Follow-ups:** all four portfolio P2 picks are DONE; could
+  surface `optimize_black_litterman` / a views form in the FastAPI demo + CLI, and add an `"black_litterman"`
+  branch to the backtester's `OptimizationRebalanceStrategy` (works today via the zero-arg contract, though
+  it needs views to differ from equilibrium). cvxpy backend remains deferred (heavy dep / scope creep).
+
+## 2026-06-02 — feature-architect — packages/market-data (replay feeder + OHLCV final-bar fix + backpressure cap)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 market-data pick #3 — all three sub-items.
+  Built on the existing `StorageBackend` Protocol / DuckDB sink / fail-fast pipeline (read first). Scoped
+  `git add` to `packages/market-data/...` + this file only (two other agents committing in parallel).
+- **(1) `Pipeline.replay(symbol, start, end, *, source="trades"|"ohlcv", interval="1m", page_size=10000)`** —
+  async generator that streams stored records back out in **timestamp order (oldest-first)**, turning the
+  ingest daemon into a research feeder. Depends ONLY on the Protocol read API (`query_trades`/`query_ohlcv`),
+  so it works against BOTH backends unchanged. `source="ohlcv"` just forwards the already-ascending
+  `query_ohlcv`. `source="trades"` had to handle that `query_trades` returns **most-recent-first capped at
+  `limit`** (the newest slice, not the oldest) — naive forward-paging returned the tail. Fix: page BACKWARD
+  (newest chunk first, narrow the upper bound to just past the oldest ts seen), accumulate, then yield sorted
+  ascending + de-duplicated on `(time, price, quantity, side)` so a boundary-tie row read in two pages isn't
+  doubled. Documented limitation: with no offset API, `page_size` must exceed the worst-case same-millisecond
+  burst (default 10000 is well clear); a no-downward-progress guard prevents an infinite loop.
+- **(2) OHLCV final-bar / single-trade-bar fix (`normalizer.py`)** — the roll-up only ever emitted a bar when
+  a LATER-minute trade arrived, so the **final in-progress minute was silently dropped at end-of-stream**
+  (the backlog "drops final bar" bug). Added `TickNormalizer.flush(symbol)` + `flush_all()` to emit the last
+  bucket's bar and clear it; `Pipeline.stop()` now calls `flush_all()` and persists those bars (best-effort,
+  logged-not-raised on sink failure) BEFORE tearing down storage. Also removed the misleading `len(bucket) < 2`
+  early-return and documented that a single-trade minute still produces a valid bar (it always did on
+  rollover; now explicit and also covered by flush). Regression tests prove the old drop and the new emit.
+- **(3) Bounded buffer / backpressure cap** — new `MAX_BUFFER_SIZE` config (env `MAX_BUFFER_SIZE`, default
+  1000). `_on_message` calls `_apply_backpressure()` after buffering: **primary policy = BLOCK** (await an
+  inline `_flush_trades`, back-pressuring the WS consumer — lossless when the sink is healthy, logs a
+  `WARNING` when the cap is hit). **Last resort only:** if the sink is STILL unreachable after that flush
+  (a failed flush re-adds its batch so the buffer can't drain), drop the OLDEST trades down to the cap to
+  guarantee a hard memory bound (no OOM), incrementing `self._dropped_trades` and logging a running count —
+  never a silent drop. Chose block-first as the safer option per the task.
+- **Tests:** +27 across three new files, all no-live-infra (107 -> 134): `test_replay.py` (replay yields
+  oldest-first across a FakeReadBackend AND a real `tmp_path` DuckDB store — trades + OHLCV, half-open window,
+  symbol isolation, empty window, multi-page paging on both backends, boundary-tie dedup, the documented
+  page_size limit, bad-source raise); `test_normalizer_flush.py` (final bar buffered-then-flush, single-trade
+  bar emits on rollover AND flush, carried-minute flush, `flush_all` across symbols, empty cases); and
+  `test_backpressure.py` (cap never exceeded with a healthy sink + inline-flush warning, drop-oldest +
+  running-count log when the sink stays down, dropped-count accumulation, below-cap no-warn/no-drop, and
+  `stop()` persisting the final OHLCV bar incl. the logged-not-raised sink-failure path).
+- **Gate (REAL numbers):** `python -m pytest` -> **134 passed** (was 107), coverage **99.07%** (gate
+  `--cov-fail-under=85`; `pipeline.py` 99%, `normalizer.py` 97%). `ruff check .` clean, `ruff format --check`
+  clean (23 files), `mypy` clean (9 source files). README (Features, config table, Usage replay example,
+  flush note), `.env.example`, and this ledger updated.
+- **Follow-ups:** P2 market-data pick #1 (pluggable `ExchangeAdapter` + 2nd exchange) is now the only open
+  market-data feature item — the headline gap vs cryptofeed/ccxt-pro. Optional: a CLI subcommand wrapping
+  `replay` (e.g. `python main.py replay --symbol btcusdt --start ... --end ...`) to dump to stdout/CSV.
+
+## 2026-06-02 — feature-architect — packages/options-pricing (vectorized batch API + real IV surface)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 options pick #3 — a vectorized/batch
+  pricing API enabling true IV chains + a real IV surface. Purely ADDITIVE: every scalar function and
+  signature in `black_scholes.py` is unchanged; `market_data.price_chain` / the existing `plot_market_iv_*`
+  helpers are untouched. No exotics/Heston/American/SVI added or claimed (stayed within AGENTS caveats).
+- **Vectorized BS in `src/black_scholes.py`** (NumPy broadcasting, NO per-contract python loop):
+  `black_scholes_price_vec(S,K,T,r,sigma,option_type,q)`, `greeks_vec(...) -> {delta,gamma,theta,vega,rho}`,
+  and `implied_volatility_vec(market_price,S,K,T,r,option_type,q,tol,max_iter)`. All accept array-likes
+  (numpy / pandas Series / scalars) for ANY arg and broadcast to a common shape via a `_broadcast` helper;
+  degenerate `T<=0` (intrinsic) / `sigma<=0` (discounted forward) entries are handled ELEMENTWISE with
+  `np.where` masks (denominators neutralized so no nan/inf leaks before masking, divide-by-zero warnings
+  silenced via safe denominators). The vec IV solver runs ONE broadcasted Newton iteration over the whole
+  array — same 0.3 seed, same step, same `sigma>=1e-6` floor and vega<1e-12 break as the scalar — and maps
+  the scalar's `None` (expired / sub-intrinsic / vega-collapse / non-convergence) to per-element `nan` so one
+  bad contract never sinks a chain.
+- **Vec == scalar consistency approach:** the vec functions reuse the exact scalar formulae (same `_d1`,
+  same cdf/pdf terms, same /365 theta and /100 vega·rho scaling), so a one-element call equals the scalar
+  call to machine precision; tests assert this elementwise (price + every Greek to 1e-12, IV round-trip and
+  IV-vs-scalar to 1e-6).
+- **Real IV surface in `src/greeks_visualizer.py`:** `solve_iv_surface(chains_by_expiry, spot, expiry_years,
+  r, option_type, q)` solves OUR IV per (strike, expiry) from market `mid` via `implied_volatility_vec` and
+  returns a tidy DataFrame (`expiry, T, strike, iv`), dropping the nan (non-solved) contracts.
+  `plot_solved_iv_surface(...)` plots IV as the z-axis over strike × time-to-expiry (years) — a GENUINE IV
+  surface, distinct from the constant-σ `plot_price_surface` — and returns the tidy frame. Headless-safe
+  (tests force Agg). IV-surface SOURCE for the smoke test = the bundled offline sample chain
+  (`market_data.get_option_chain(..., offline=True)`), synthesized into two expiries; NO live network.
+- **Tests (`tests/test_vectorized.py`, NEW): +31 (170 -> 201).** Vec-vs-scalar price across strikes/sigma/T
+  (incl. 3×3 broadcast, pandas Series, dividend q, mixed-degenerate column, intrinsic/zero-vol limits);
+  vec-vs-scalar all-Greeks (call+put, parametrized) + degenerate-expiry delta steps + shape/keys; vec IV
+  round-trip to 1e-6, vec==scalar IV to 1e-6, sub-intrinsic/expired -> nan, mixed valid+invalid no crash,
+  absurd-price -> nan; bad-option_type raises on all three vec fns; and the offline IV-surface block —
+  tidy-frame schema, surface IV == scalar solver per contract, empty-input frame, headless save + no-save.
+- **Gate (REAL numbers):** `python -m pytest` -> **201 passed** (was 170), coverage **99.24%** (gate
+  `--cov-fail-under=95` met; `black_scholes.py` 99%, `greeks_visualizer.py` 98%, `market_data.py` 100%).
+  `ruff check .` clean, `ruff format --check` clean (13 files), `mypy src` clean (5 files). The two remaining
+  partial branches are the scalar IV loop exit (pre-existing) + the vec IV early-`any()` guard + plot
+  save-path branches — all benign.
+- **User actions:** none beyond eventual push. **Follow-ups:** could surface the vec API in the Streamlit
+  app / CLI (e.g. a "solved IV surface" tab fed by multi-expiry `price_chain` calls). Heston/exotics/SVI
+  remain intentionally out of scope.
+
+## 2026-06-02 — feature-architect — cpp/order-book (throughput/latency benchmark harness)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 order-book pick #3 — a runnable
+  throughput + latency benchmark harness driving the live C++ matching engine through the `orderbook`
+  pybind11 binding. Purely ADDITIVE: NO C++ engine code, bindings, CMake, or existing tests touched —
+  one new file (`benchmarks/bench.py`) + README/IMPROVEMENTS docs. ctest stayed 53/53, pytest 27/27.
+- **What it measures (`benchmarks/bench.py`):**
+  - **Throughput** — pre-generates a deterministic synthetic order flow (~80% LIMIT / 20% MARKET, both
+    sides, prices placed -2..+2 ticks around a slow random-walk mid so the flow both crosses the book
+    AND leaves resting depth), then feeds it through `OrderBook.add_order` in a tight timed loop
+    (`add_order` bound out of the hot loop) and reports orders/sec over `--repeat` runs (best reported).
+    Generation cost is excluded from timing.
+  - **Latency** — a separate pass times each individual `add_order` with `time.perf_counter_ns` and
+    reports the distribution (mean / p50 / p90 / p99 / max) in microseconds via nearest-rank percentiles.
+  - Workload size is CLI-configurable (`--orders`, default 500k ≈ a few seconds; `--repeat`, `--seed`);
+    prints a clean machine/arch header + summary table. Heavy work is guarded under `if __name__ ==
+    "__main__"` so pytest collection never runs it (it also lives in `benchmarks/`, outside `testpaths
+    = tests` and outside the `--cov` source `python`, so it neither runs nor dilutes coverage).
+- **REAL measured numbers (Apple M2 Pro, arm64, macOS 26.5, Python 3.12.10; 500,000 orders/run, seed 7;
+  driven via the pybind11 binding so figures INCLUDE the Python→C++ call overhead — the native matching
+  path is faster):**
+  - **Throughput: ~186,000 orders/sec** (best of 3: runs were 185,368 / 185,710 / 183,717 orders/sec).
+  - **Latency: p50 4.833 µs, p90 10.625 µs, p99 18.084 µs, max 100.916 µs, mean 5.360 µs.**
+  - 466,518 trades produced from the 500,000-order flow (matching path well-exercised).
+- **Build/gates (real numbers):** `cmake -S . -B build && cmake --build build` green; `ctest --test-dir
+  build` → **53/53 passed** (0.48s). `python -m pytest` → **27 passed**, coverage **97.12%** (gate
+  `--cov-fail-under=80` met; benchmark excluded from coverage source as intended). `ruff check` +
+  `ruff format --check` clean on `benchmarks/bench.py`.
+- **Docs:** README gained a "4. Benchmark the matching engine" Quick-Start subsection (run commands +
+  the measured M2 Pro results table, clearly labeled with machine/arch + workload size, NOT fabricated)
+  and `benchmarks/bench.py` added to the Project Structure tree.
+- **Follow-ups:** all three P2 order-book picks (pybind11, IOC/FOK/post-only, benchmark) now DONE. Next
+  natural step toward "ABIDES-lite" is a native C++ micro-benchmark (isolates the matching path from the
+  binding overhead) and the strategic discrete-event latency clock → agent-based participants. WASM core
+  for the showcase remains a separate demo win. Stop/stop-limit/iceberg still intentionally out of scope.
+
+## 2026-06-02 — feature-architect — cpp/order-book (pybind11 bindings — engine now programmable from Python)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 order-book pick #1 (highest-leverage
+  foundational item): pybind11 bindings making the C++ matching engine drivable directly from Python. The
+  C++ engine code (`include/`, `src/order_book.cpp`, `src/matching_engine.cpp`) was NOT modified — purely
+  additive bindings + build wiring + test replacement. ctest stayed 53/53.
+- **Bindings (`src/bindings.cpp`, module `_orderbook`):** binds the `Side` / `OrderType` / `TimeInForce`
+  enums; `Order` (custom `__init__` that defaults `remaining_quantity = quantity` and `tif = GTC`, with
+  read/write fields + `is_filled()` + a `__repr__`); read-only `Trade` and `DepthLevel` (+ `__repr__`);
+  `OrderBook` (ctor, `add_order` -> list[Trade], `cancel_order`, `modify_order`, `get_best_bid/ask`
+  returning Optional[float] via `std::optional`, `get_spread`, `get_bid_depth`/`get_ask_depth`,
+  `get_volume_at_price`, `bid_count`/`ask_count`, `symbol` property); and `MatchingEngine` (ctor,
+  `submit_order`, `cancel_order`, `get_order_book` with `reference_internal` policy, `get_symbols`).
+  Uses `pybind11/stl.h` for vector/optional and `pybind11/chrono.h` (timestamps not exposed but header pulled
+  for completeness). C++17, matched existing 4-space LLVM/col-100 style by hand (clang-format not installed).
+- **Build wiring (`CMakeLists.txt`):** pybind11 v2.13.6 via FetchContent (mirrors the existing GoogleTest
+  fetch — NO pip/system pybind11 dep). New `option(BUILD_PYTHON_BINDINGS ON)` guards a
+  `pybind11_add_module(_orderbook ...)` so the C++ demo + GoogleTest targets still build with
+  `-DBUILD_PYTHON_BINDINGS=OFF`. The compiled `.so` is emitted (via `LIBRARY_OUTPUT_DIRECTORY`) straight into
+  `python/orderbook/`, where a thin `__init__.py` re-exports it — so `import orderbook` works from `python/`
+  with no install step. The `.so` is gitignored (`*.so`); it is rebuilt by cmake.
+- **Tests (`tests/test_orderbook.py` REWRITTEN + `tests/conftest.py` NEW):** dropped the old 7 brittle
+  subprocess-stdout-parsing tests against `order_book_demo` (and their build-then-rmtree fixture that would
+  have wiped the compiled module). New suite drives the engine IN-PROCESS through the binding: basic
+  crossing/resting/partial-fill, market sweep across levels, FIFO price-time priority, cancel/modify, depth +
+  best bid/ask + spread queries, multi-symbol `MatchingEngine` routing/cancel, and the TIF paths — IOC
+  partial-fill-then-cancel + IOC no-liquidity, FOK kill-vs-fill, POST_ONLY rejected-when-crossing +
+  rests-when-not — proving the TimeInForce path is reachable from Python. `conftest.py` puts `python/` on
+  `sys.path`; the module `pytest.importorskip`s `orderbook` so an unbuilt extension skips cleanly rather than
+  erroring. The viz/sim tests (`test_python_viz.py`) are unchanged.
+- **Build/gates (REAL numbers, from a clean `rm -rf build`):** `cmake -S . -B build && cmake --build build`
+  builds the demo + GoogleTest + `_orderbook` module all green. `ctest --test-dir build` -> **53/53 passed**.
+  `python -m pytest` -> **27 passed**, coverage **97.12%** (gate `--cov-fail-under=80` met;
+  `python/orderbook/__init__.py` 100%). `ruff check` + `ruff format --check` clean on the new Python files.
+  Verified `import orderbook` + a submit/fill/depth round-trip works from `python/`.
+- **Follow-ups:** P2 pick #3 throughput/latency benchmark harness still OPEN (now trivially Python-driveable
+  via the binding). Wire `simulator.py`'s generated order flow through the `orderbook` binding into the live
+  C++ book and feed resulting depth/trades into `visualizer.py` for an end-to-end Python-driven sim (noted in
+  README Roadmap). Stop/stop-limit/iceberg remain intentionally out of scope.
+
+## 2026-06-02 — feature-architect — packages/market-data (pluggable StorageBackend + DuckDB sink)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 market-data pick #2 — a pluggable
+  `StorageBackend` protocol + a local DuckDB/Parquet sink. ADDITIVE: the TimescaleDB path is unchanged and
+  stays the default, so existing deploys behave identically. Decouples the demo from TimescaleDB (which
+  Render's managed Postgres can't host) → the pipeline is now RUNNABLE with zero external DB.
+- **`src/storage_backend.py`** — new `runtime_checkable` `StorageBackend` Protocol capturing the EXACT async
+  surface `pipeline.py` already uses: `connect`/`disconnect`/`init_schema`/`insert_trades`/`insert_ohlcv` +
+  the read API `query_trades`/`query_ohlcv`. The existing `TimeSeriesStorage` already conforms verbatim (no
+  behavior change — asserted via `isinstance(..., StorageBackend)` in tests); `pipeline.storage` is now typed
+  `StorageBackend`.
+- **`src/duckdb_storage.py`** — new `DuckDBStorage(database_path=...)` writing the SAME normalized
+  `trades`/`ohlcv` schema (identical column order/types to the Timescale DDL) to a local DuckDB file (or
+  `:memory:`). DuckDB's API is sync, so every call runs on a worker thread via `asyncio.to_thread` (keeps the
+  async surface, doesn't block the loop). Read methods return dicts keyed exactly like Timescale's
+  (`time, symbol, price, …` / `time, symbol, open, …, trade_count`). Bonus `export_parquet(dir)` dumps both
+  tables to Parquet for downstream research tooling. No network, no external DB.
+- **Config selection (`src/config.py`):** added `storage_backend` (env `STORAGE_BACKEND`, default
+  `"timescale"` → unchanged) and `duckdb_path` (env `DUCKDB_PATH`, default `data/marketdata.duckdb`). New
+  `build_storage(config)` factory in `pipeline.py` returns Timescale by default, DuckDB when selected (lazy
+  import so duckdb is only needed when chosen), and raises on unknown backends. Fail-fast preserved AND made
+  backend-aware: Timescale failure still logs the `DATABASE_URL` line (now also hints `STORAGE_BACKEND=duckdb`);
+  DuckDB failure logs a `DUCKDB_PATH`-fix line. Redis fail-fast untouched.
+- **Tests:** +30 (76 → 106) across two new files, all no-live-infra: `test_duckdb_storage.py` round-trips
+  trades+OHLCV against a real `tmp_path` DuckDB file (column order == `_TRADE_COLUMNS`/`_OHLCV_COLUMNS` ==
+  Timescale schema, float/str/aware-datetime types, time-bound/symbol/interval/limit filters, ascending order,
+  persistence across reconnect, Parquet export, connect-required guard, both backends satisfy the Protocol);
+  `test_storage_backend_selection.py` covers config default=timescale + lowercasing + DUCKDB_PATH override,
+  `build_storage` picks/raises, and drives the Pipeline END-TO-END with FakeCache+FakeClient but a REAL DuckDB
+  store (batch flush + OHLCV roll persisted and queried back; `start()` wires it with no Postgres; bad
+  DUCKDB_PATH → actionable fail-fast). Existing Timescale/fake-pool tests unchanged.
+- **Gate (real numbers):** `python -m pytest` → **106 passed** (was 76), coverage **98.88%** (gate
+  `--cov-fail-under=85`; `duckdb_storage.py` 99%, `storage_backend.py` 100%, `config.py` 100%). `ruff check`
+  clean, `ruff format --check` clean (20 files), `mypy` clean (9 source files). `duckdb==1.5.3` pinned in
+  requirements.txt; `.gitignore` ignores `*.duckdb`/`*.parquet`/`data/`; `.env.example` + README (Features,
+  config table, new "Storage backends" subsection, Project Structure) updated.
+- **Unblocks a no-external-DB Render deploy:** set `STORAGE_BACKEND=duckdb` and the worker needs only Redis +
+  a writable disk — no external TimescaleDB. (Render free disks are ephemeral, so this is best for a runnable
+  demo / local dev rather than durable storage; for persistence either use Timescale or a Render persistent
+  disk + periodic `export_parquet`.)
+- **Follow-ups:** P2 market-data pick #1 (pluggable `ExchangeAdapter` + 2nd exchange) and pick #3
+  (`replay(symbol,start,end)` from store + OHLCV final-bar fix + backpressure cap) still OPEN. Could wire
+  `STORAGE_BACKEND=duckdb` into `render.yaml` for a guaranteed-runnable cloud demo (deploy-engineer).
+
+## 2026-06-02 — feature-architect — packages/portfolio-optimization (Hierarchical Risk Parity)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 portfolio pick #2 — `optimize_hrp()`
+  (López de Prado, 2016). Purely ADDITIVE / API-SAFE: no existing public signature changed, no metrics math
+  touched. Builds on top of the just-added `solved_efficient_frontier` + Ledoit-Wolf `covariance.py` (read
+  both first). Solver-free — fits the scipy/numpy-only ethos (uses `scipy.cluster.hierarchy.linkage` /
+  `to_tree` + `scipy.spatial.distance.squareform`; NO sklearn, NO cvxpy).
+- **New `PortfolioOptimizer.optimize_hrp(linkage_method="single")`** in `optimizer.py`. Three classic stages:
+  (1) **Tree clustering** — correlation distance `d = sqrt(0.5*(1-corr))` (corr derived from `self.cov_matrix`,
+  clipped to [-1,1] for FP safety), condensed via `squareform`, then `linkage(method=...)`. (2)
+  **Quasi-diagonalization** — `_hrp_quasi_diag` reads the linkage tree's leaves left-to-right (`to_tree(...).
+  pre_order`) so correlated assets are adjacent. (3) **Recursive bisection** — `_hrp_recursive_bisection`
+  starts all weights at 1, repeatedly splits each contiguous cluster and scales the halves by
+  `1 - var_left/(var_left+var_right)`, where `_hrp_cluster_var` is the inverse-variance ("naive risk parity")
+  cluster variance `w'Cov w`. Final weights renormalized to sum to 1 (long-only by construction).
+- **Contract preserved:** uses ONLY `self.cov_matrix` (the injected-returns path); returns the SAME
+  `PortfolioResult` via the shared `_make_result` (return/vol/Sharpe/Sortino/CVaR through the identical
+  `portfolio_*` stat methods every other objective uses), so the backtester can call it zero-arg. Raises the
+  same `"Call calculate_returns() first"` ValueError when cov is unset. Single asset -> weight 1.0. HRP is
+  intrinsically long-only/fully-invested so it deliberately takes NO bounds/short/group kwargs (narrow sig).
+- **Tests:** +15 new in `tests/test_hrp.py` (191 -> 206), all injected-returns / no network: weights sum to 1
+  and non-negative; result exposes all backtester fields + `objective=="hrp"`; reported vol/return/Sharpe
+  match recomputing from weights AND match the shared `metrics.annualized_return`; on a 2-block synthetic cov
+  (low-vol A/B/C vs ~5x-vol D/E/F, ~0 cross-corr) risk is split across BOTH blocks with the low-vol block
+  carrying the clear majority (sanity, not exact); within-block near-identical assets get comparable weight;
+  higher-variance asset down-weighted vs low-vol peer; runs on the same injected path as the others +
+  before-calculate raises; degenerate single-asset (->1.0), 2-asset (lower-vol gets more), perfectly-
+  correlated (dist 0, no NaN), duplicate-column singular cov — none crash; unit tests for the quasi-diag
+  permutation/block-contiguity and `_hrp_cluster_var` == inverse-variance portfolio.
+- **Gate (real numbers):** `python -m pytest` -> **206 passed** (was 191), coverage **96.17%** (gate
+  `--cov-fail-under=90` met; `optimizer.py` 98% — the 2 missed lines/branches are pre-existing CVaR-LP-fail
+  / target-return-cap paths, not HRP). `ruff check .` clean, `ruff format --check` clean (28 files), `mypy`
+  clean (10 source files).
+- **Follow-ups:** P2 portfolio runner-up Black-Litterman (M) still open; cvxpy backend deferred (scope creep).
+  Optional: expose `optimize_hrp` as an objective in the FastAPI demo / CLI and wire an `"hrp"` branch into the
+  backtester's `OptimizationRebalanceStrategy` (it would work today via the zero-arg contract).
+
+## 2026-06-02 — feature-architect — cpp/order-book (IOC / FOK / post-only time-in-force)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 order-book pick #2 — IOC/FOK/post-only as
+  pure match-loop variants, NO new book data structures. All existing MARKET/LIMIT/GTC behavior preserved
+  exactly (53/53 ctest pass; the demo still runs unchanged).
+- **Modeled as a `TimeInForce` flag, NOT extra `OrderType` values** (`include/order.h`): new
+  `enum class TimeInForce { GTC, IOC, FOK, POST_ONLY }` plus an `Order::tif = TimeInForce::GTC` field placed
+  after `remaining_quantity` with a default member initializer. Rationale: IOC/FOK/post-only are
+  time-in-force / execution semantics orthogonal to the price type (an IOC order is still a LIMIT or MARKET),
+  mirroring the FIX TimeInForce + ExecInst split. Keeping `OrderType` as `{MARKET, LIMIT}` means all existing
+  price-comparison logic in `match_order` is untouched, and the 7-field aggregate-init call sites in
+  `main.cpp` + tests still compile (tif defaults to GTC).
+- **Match-loop changes (`src/order_book.cpp`, all in `add_order` + two const helpers — `match_order` itself
+  unchanged):**
+  - POST_ONLY: pre-check `would_cross(order)` (best-ask/bid comparison, MARKET always crosses); if it would
+    take liquidity, return `{}` (reject — nothing rests, no trades). Otherwise falls through and rests as a
+    maker via the normal path.
+  - FOK: pre-check `available_fill_quantity(order)` (walks reachable levels capped at the order's price,
+    short-circuits once it reaches the needed qty); if `< remaining_quantity`, return `{}` (kill — book
+    untouched). Otherwise the normal `match_order` fills it completely.
+  - IOC: no pre-check needed — runs the normal `match_order` (which already stops at the limit price / sweeps
+    for MARKET), and the new resting predicate excludes IOC so any unfilled remainder is simply dropped
+    (never rests).
+  - The resting rule is now `type == LIMIT && (tif == GTC || tif == POST_ONLY)` — MARKET/IOC/FOK never rest.
+- **Tests:** +18 GoogleTests in `tests/test_order_book.cpp` (`with_tif` helper) -> **ctest 35/35 -> 53/53**:
+  IOC partial-fill-then-cancel-remainder, IOC full-fill (resting maker keeps remainder), IOC no-liquidity full
+  cancel, IOC market-on-empty-book, IOC multi-level sweep + cancel; FOK fills-completely across levels, FOK
+  exact-liquidity, FOK kill (book unchanged), FOK price-capped kill, FOK sell-side kill+fill; post-only rests
+  when not crossing (buy + sell), post-only rejected when it would cross (buy at/above ask, sell at/below bid),
+  post-only rests on empty book; GTC-default-unchanged + engine-routes-IOC/FOK. Each asserts BOTH reported
+  fills and resulting book state (counts + volume-at-price).
+- **Build/gate (real numbers):** `cmake -S . -B build && cmake --build build && ctest` -> **53/53 passed**
+  (was 35). Demo `order_book_demo` rebuilt + ran clean. `clang-format` NOT installed in this env (matched the
+  existing 4-space LLVM/col-100 style by hand); pybind11 deliberately NOT added (separate future pass). Python
+  side untouched, so no pytest run needed.
+- **Docs:** README Features + scope-note updated (added a Time-in-force bullet + semantics table; clarified
+  the FIX-style TIF-vs-OrderType split), Roadmap line "Time-in-force (IOC/FOK)..." removed (now done),
+  file-tree comment notes the new `TimeInForce` enum.
+- **Follow-ups:** P2 order-book pick #1 **pybind11 bindings** still OPEN (highest-leverage; would let Python
+  tests drive these TIF orders directly instead of via `main.cpp`). Pick #3 throughput/latency benchmark
+  harness also open. Stop/stop-limit/iceberg remain intentionally out of scope.
+
+## 2026-06-02 — feature-architect — packages/backtesting (CSV/DataFrame handlers + 3 wired optimizer objectives)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 backtesting picks #1 and #2 — both ADDITIVE.
+  No existing public behavior changed; the cross-package contract (shared `metrics` parity, optimizer used ONLY
+  via its existing injected-returns + zero-arg `optimize_*` + `PortfolioResult.weights` API) is intact. The
+  portfolio-optimization package was NOT modified.
+- **(1) Offline data handlers** in `src/data_handler.py`. Extracted all bar/event read methods
+  (`get_latest_bars`, `iter_bars`, `get_current_price`, `get_resampled_bars`, `get_current_bar`,
+  `get_next_open`) into a new private `_InMemoryDataHandler` base so ALL handlers share byte-identical
+  windowing / no-look-ahead resampling / next-open semantics. `YFinanceDataHandler` now subclasses it
+  (behavior unchanged — `fetch()` still goes DuckDB-cache-then-`download_ohlcv`, ctor signature kept).
+  New `DataFrameDataHandler({ticker: df}, start=None, end=None)`: takes pre-built in-memory frames, normalizes
+  them eagerly in `__init__` (case-insensitive OHLC cols, optional Volume defaulted to 0, Date/Datetime/
+  Timestamp/Time column promoted to a sorted DatetimeIndex), infers start/end from the data when omitted,
+  `fetch()` is a no-op. New `CSVDataHandler(tickers, path, start=None, end=None, *, per_ticker=True,
+  filename_template="{ticker}.csv", symbol_column="symbol")`: loads either one CSV per ticker from a directory
+  (default) OR a single combined file with a `symbol`/`ticker` column; normalizes via the same helper and
+  date-slices to `[start, end]`. Shared `_normalize_ohlcv()` guarantees the canonical
+  `Open/High/Low/Close/Volume` shape so the rest of the engine works unchanged. Kills the hard yfinance
+  dependency for offline/custom/intraday data.
+- **(2) Three wired optimizer objectives** in `OptimizationRebalanceStrategy`. `objective` now also accepts
+  `sortino`, `max_return_target_vol`, `min_vol_target_return` (was sharpe/min_vol/min_cvar/risk_parity).
+  The two constrained objectives take a new `target` ctor param (annual vol cap for max_return_target_vol;
+  min annual return for min_vol_target_return), validated at construction (raises if missing). For
+  `min_vol_target_return` the target is clamped to the window's max-achievable long-only return so a too-high
+  ask degrades to the max-return corner instead of raising and skipping the rebalance. Unknown objective still
+  falls back to sharpe. Uses ONLY the optimizer's existing public methods on injected returns.
+- **Tests:** +22 in new `tests/test_data_handlers.py` (126 -> 148). A `_assert_parity` harness drives a
+  `YFinanceDataHandler` (frames pre-injected, no network) and each new handler through identical pointer
+  positions and asserts `iter_bars` count/order, `get_latest_bars` windowing, `get_resampled_bars` no-look-ahead,
+  `get_current_bar`/`get_current_price`/`get_next_open` all match (CSV scalars via `pytest.approx` — a CSV
+  round-trip loses ~1 ulp; frames via `assert_frame_equal(check_freq=False)` since freq is metadata, and real
+  yfinance data also has `freq=None`). Plus per-ticker + combined-CSV loads, date slicing, lowercase/missing-
+  Volume/date-column-promotion/sort normalization, missing-file & missing-symbol-column & unknown-ticker errors,
+  a full backtest through `CSVDataHandler`, and each of the 3 new objectives producing long-only weights summing
+  to 1 (unit `_compute_targets` + end-to-end `Backtest.run()`), the clamp path, and the missing-`target` raise.
+- **Gate (real numbers):** `python -m pytest` -> **148 passed** (was 126), coverage **88.74%** (gate
+  `--cov-fail-under=80` met; `data_handler.py` 96%, `strategy.py` 87%). `ruff check .` clean, `ruff format
+  --check` clean (21 files), `mypy` clean (13 source files). No live network in any test.
+- **Follow-ups:** P2 backtesting pick #3 (native short selling) still OPEN. Optionally expose `--data-csv` /
+  `--data-source` through `main.py`/dashboard so the new handlers are reachable from the CLI/UI end-to-end.
+
+## 2026-06-02 — feature-architect — packages/portfolio-optimization (solved frontier + Ledoit-Wolf shrinkage)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 portfolio picks #1 and #3 — both ADDITIVE /
+  API-SAFE. The backtester's injected-returns + zero-arg `optimize_*` + `PortfolioResult.weights` contract and
+  the shared `metrics` parity are untouched (no existing signature changed).
+- **(1) True solved efficient frontier** — new `PortfolioOptimizer.solved_efficient_frontier(n_points=50, **cons)`.
+  Sweeps the EXISTING `optimize_min_vol_target_return` across a return grid from the global min-vol portfolio's
+  return up to `mean_returns.max()`, recording the solved min-vol portfolio per target. Returns a DataFrame
+  (`return`, `volatility`, `sharpe`, `w_<ticker>...`) sorted by return. Infeasible/solver-failed targets are
+  caught and skipped (so e.g. a tight `max_weights` cap just yields fewer rows, never an exception); single-asset
+  degenerate grid is widened so it doesn't crash. The OLD random-Dirichlet `efficient_frontier` is KEPT
+  unchanged (analysis.py + main.py + plotter still use it as the scatter cloud) — the solved frontier is purely
+  additive.
+- **(3) Ledoit-Wolf covariance shrinkage** — new `covariance.py` (numpy-only, NO sklearn): `ledoit_wolf_shrinkage(
+  returns, target=...)` returns `(shrunk_cov, intensity)` with intensity clipped to [0,1] and the result forced
+  symmetric/PSD; targets `constant_correlation` (default) and `identity` via `constant_correlation_target` /
+  `identity_target`. Wired OPT-IN through `calculate_returns(shrinkage=None|"constant_correlation"|"identity")`
+  via a private `_estimate_cov_matrix`; the chosen intensity is exposed on `self.shrinkage_intensity` (None when
+  off). **Parity preserved:** with `shrinkage=None` (the default, and what the backtester uses) the cov is
+  `returns.cov() * 252` — byte-identical to before (test asserts `.equals`).
+- **Tests:** +24 new in `tests/test_frontier_shrinkage.py` (167 -> 191): frontier return/vol monotonicity, vols
+  are the solved per-target minimum (spot-checked vs re-solve) and never below global min-vol, weights sum to 1
+  and respect bounds incl. a `max_weights` cap, infeasible-target skipping, before-calculate / n_points<2 guards,
+  single-asset degenerate; shrinkage intensity in [0,1], symmetric PSD, shrinks-toward-target (Frobenius), exact
+  convex-combination identity, single-asset zero intensity, <2-obs raise, unknown-target raise, ndarray/1-D/3-D
+  input handling; and a PARITY block proving default cov == sample cov and default weights unchanged.
+- **Gate (real numbers):** `python -m pytest` -> **191 passed** (was 167), coverage **95.93%** (gate
+  `--cov-fail-under=90` met; `covariance.py` 100%, `optimizer.py` 98%). `ruff check .` clean, `ruff format --check`
+  clean (27 files), `mypy` clean (10 source files).
+- **Follow-ups:** P2 pick #2 `optimize_hrp()` (Hierarchical Risk Parity) still OPEN. Optional: switch the
+  `plot_efficient_frontier` overlay / analysis pipeline to draw the solved boundary on top of the cloud; expose a
+  `shrinkage` knob in `AnalysisConfig` + CLI + FastAPI demo (left off so the default stays parity-safe).
+
+## 2026-06-02 — feature-architect — packages/options-pricing (higher-order Greeks + Black-76)
+- Branch `feature/agent-improvements` (NOT pushed). Implemented P2 options picks #1 and #2 — both additive,
+  closed-form, low-risk. NO existing public signatures or behavior changed.
+- **Higher-order Greeks** in `src/black_scholes.py` (same style as the first-order Greeks — `S, K, T, r,
+  sigma, [option_type], q`): `vanna` (`d(delta)/dσ = d(vega)/dspot`, type-independent), `volga`/vomma
+  (`d(vega)/dσ`, type-independent), `charm` (delta decay, standard convention `charm = -d(delta)/dT`,
+  type-dependent via the dividend-carry term). All return 0 at `T<=0` / `σ<=0` like the existing Greeks.
+- **Black-76 futures-options pricer** in `src/black_scholes.py`: `black_76_price(F, K, T, r, sigma,
+  option_type)` (discounts the forward, no spot carry) plus per-Greek helpers `black_76_delta` /
+  `black_76_gamma` / `black_76_vega`. Mirrors the existing degenerate-case handling (`T<=0` -> intrinsic,
+  `σ<=0` -> discounted intrinsic). Completes the py_vollib "core three" (BS / BSM-with-dividend / Black-76).
+- **Verification approach (reference-value + finite-difference):** vanna checked against BOTH `d(vega)/dspot`
+  and `d(delta)/dσ`; volga against `d(vega)/dσ`; charm against `-d(delta)/dT` (call, put, and with dividend).
+  Black-76 checked against an independently-computed ATM-forward reference (0.787645), futures put-call parity
+  `C - P = e^{-rT}(F-K)` across an F×T grid, equivalence to Black-Scholes when `F = S·e^{(r-q)T}`, and its
+  Greeks against central differences of `black_76_price`. Type-independence and zero-vol/expiry limits asserted.
+- **Tests:** +29 (141 -> 170), all in `tests/test_accuracy.py` (`TestHigherOrderGreeks`, `TestBlack76`).
+  **Coverage 99.27% -> 99.37%** (gate `--cov-fail-under=95` met; the one partial branch 307->324 is the
+  pre-existing IV-solver loop exit, unchanged). `ruff check` clean, `ruff format --check` clean (12 files),
+  `mypy src` clean (5 files). `python main.py` textbook demo still works and now also prints vanna/volga/charm
+  and a Black-76 call/put line.
+- **Stayed within AGENTS domain caveats:** vanilla European closed-form only — NO exotics/American-extension/
+  Heston/MC/FD added or claimed.
+- **Follow-ups (P2 options pick #3, deferred):** vectorized/batch pricing API for true IV chains/surface;
+  note `plot_volatility_surface` was already renamed to `plot_price_surface` in a prior pass.
 
 ## 2026-06-02 — main thread (user-requested) — packages/options-pricing (Finnhub key validation)
 - Branch `feature/agent-improvements` (1 `feat:` commit; NOT pushed). Live-tested the user's newly added

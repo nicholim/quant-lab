@@ -50,6 +50,11 @@ class FakeWebSocket:
         self._messages = list(messages or [])
         self._raise_on_iter = raise_on_iter
         self.closed = False
+        self.sent: list = []
+
+    async def send(self, message):
+        """Record an outbound message (e.g. a subscribe payload)."""
+        self.sent.append(message)
 
     def __aiter__(self):
         return self._gen()

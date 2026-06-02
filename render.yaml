@@ -20,6 +20,17 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # The dashboard fetches OHLCV via yfinance, which is frequently
+      # rate-limited from cloud IPs. Unlike the options app, the backtesting
+      # data layer RAISES (MarketDataError) on a failed fetch rather than
+      # auto-serving the fixture — the dashboard surfaces that as an in-UI
+      # error instead of 500ing, but the demo won't show results. Leave OFFLINE
+      # OFF by default so live data shows when egress allows; uncomment the line
+      # below to FORCE the deterministic bundled-fixture demo (see DEPLOY.md
+      # "Live market data / OFFLINE flags"). The env flag overrides the app's
+      # offline=False arg at the data layer.
+      # - key: BACKTESTING_OFFLINE
+      #   value: "1"
 
   # ---- Options pricing calculator (Streamlit) ----
   - type: web
@@ -67,11 +78,20 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.10"
+      # No data flag needed: the FastAPI demo optimizes a returns matrix POSTed
+      # by the caller, so the deployed service does NO network fetch and is
+      # deterministic by construction. (The library/CLI still honor
+      # PORTFOLIO_OFFLINE=1 for their own yfinance fetches; not relevant here.)
 
   # ---- Market data ingestion daemon (Docker background worker) ----
-  # Needs Redis (managed Key Value, wired below) and an EXTERNAL TimescaleDB
-  # (Render's managed Postgres lacks the Timescale extension) — set DATABASE_URL
-  # as a secret. dockerfilePath is relative to rootDir.
+  # DEFAULT deploy needs NO external database: STORAGE_BACKEND=duckdb writes the
+  # normalized trades/ohlcv to a local DuckDB file on disk, so the worker runs on
+  # just managed Redis (wired below) + the container's writable disk. NOTE: on
+  # the free plan that disk is EPHEMERAL — fine for a live-streaming demo, but
+  # data is lost on redeploy/restart. For durable storage either attach a Render
+  # persistent disk, or switch to Timescale by setting STORAGE_BACKEND=timescale
+  # and DATABASE_URL (kept below as an optional sync:false secret).
+  # dockerfilePath is relative to rootDir.
   - type: worker
     name: market-data-pipeline
     runtime: docker
@@ -86,8 +106,21 @@ services:
           type: keyvalue
           name: market-data-cache
           property: connectionString
+      # No-external-DB default: persist ticks/bars to a local DuckDB file.
+      - key: STORAGE_BACKEND
+        value: duckdb
+      # DuckDB file path (under the working dir; ephemeral on the free plan).
+      - key: DUCKDB_PATH
+        value: data/marketdata.duckdb
+      # OPTIONAL — only used if you switch STORAGE_BACKEND to "timescale".
+      # Leave UNSET for the default DuckDB demo. To use Timescale, set
+      # STORAGE_BACKEND=timescale and paste an external TimescaleDB URL here
+      # (Timescale Cloud / Aiven; Render's managed Postgres lacks the extension).
       - key: DATABASE_URL
-        sync: false # set to an external TimescaleDB URL (Timescale Cloud / Aiven)
+        sync: false
+      # Exchange adapter: "binance" (default, keyless) or "coinbase".
+      - key: EXCHANGE
+        value: binance
       - key: WS_URL
         value: wss://stream.binance.com:9443/ws
       - key: SYMBOLS
@@ -98,6 +131,9 @@ services:
         value: "100"
       - key: FLUSH_INTERVAL_SECONDS
         value: "5"
+      # Backpressure cap on the in-memory trade buffer (>= BATCH_SIZE).
+      - key: MAX_BUFFER_SIZE
+        value: "1000"
 
 keyValue:
   - name: market-data-cache

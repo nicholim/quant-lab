@@ -20,6 +20,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "python"))
 
+# simulator imports the compiled `orderbook` extension at module load.
+pytest.importorskip(
+    "orderbook",
+    reason="compiled _orderbook extension not built — run cmake --build build first",
+)
+
 from simulator import MarketSimulator  # noqa: E402
 from visualizer import OrderBookVisualizer  # noqa: E402
 

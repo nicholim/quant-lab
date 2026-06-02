@@ -8,6 +8,8 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
+from .adapters import BinanceAdapter, ExchangeAdapter
+
 logger = logging.getLogger(__name__)
 
 # A connection that stays open at least this long has survived a full ping/pong
@@ -20,9 +22,18 @@ _STABLE_CONNECTION_SECONDS = 60
 class MarketDataClient:
     """Async WebSocket client with auto-reconnect for market data streams."""
 
-    def __init__(self, ws_url: str, max_retries: int = 10):
+    def __init__(
+        self,
+        ws_url: str,
+        max_retries: int = 10,
+        adapter: ExchangeAdapter | None = None,
+    ):
         self.ws_url = ws_url
         self.max_retries = max_retries
+        # The adapter decides the per-exchange URL + subscribe payload. Default
+        # to Binance built from ``ws_url`` so callers that don't pass one (and
+        # the existing tests) behave exactly as before.
+        self.adapter: ExchangeAdapter = adapter or BinanceAdapter(ws_url)
         self._ws: ClientConnection | None = None
         self._callbacks: list[Callable[[dict], Awaitable[None]]] = []
         self._running = False
@@ -35,8 +46,8 @@ class MarketDataClient:
     async def connect(self, symbols: list[str]) -> None:
         """Connect to WebSocket and start consuming messages."""
         self._running = True
-        streams = "/".join(f"{s}@trade" for s in symbols)
-        url = f"{self.ws_url}/{streams}"
+        url = self.adapter.ws_url(symbols)
+        subscribe = self.adapter.subscribe_payload(symbols)
 
         while self._running and self._retry_count < self.max_retries:
             connected_at: float | None = None
@@ -45,6 +56,12 @@ class MarketDataClient:
                     self._ws = ws
                     connected_at = time.monotonic()
                     logger.info(f"Connected to {url}")
+                    # Venues that select streams via a subscribe message (e.g.
+                    # Coinbase) need it sent right after the socket opens; URL-
+                    # embedded-stream venues (Binance) return None and skip this.
+                    if subscribe is not None:
+                        await ws.send(json.dumps(subscribe))
+                        logger.info(f"Sent subscribe for {symbols}")
                     # The retry budget is cleared two ways: inside _consume() the
                     # moment a message arrives, and in _reconnect() if this
                     # connection stayed up long enough to be deemed healthy (so a

@@ -69,12 +69,23 @@ cd apps/showcase-site && npm ci && npm run build
 
 - **Render** (`render.yaml`): one blueprint defines all runnable services
   (backtesting Dash app, options Streamlit app, portfolio FastAPI demo, and the
-  market-data Docker worker), each scoped with `rootDir`. The market-data worker
-  needs a managed Key Value (Redis) — wired in the blueprint — and an **external**
-  TimescaleDB (`DATABASE_URL`), since Render's Postgres lacks the Timescale extension.
+  market-data Docker worker), each scoped with `rootDir`. The blueprint is tuned
+  so every demo runs with **no external database**:
+  - The **market-data worker** defaults to `STORAGE_BACKEND=duckdb` and needs
+    only the managed Key Value (Redis) — wired in the blueprint — plus the
+    container's writable disk (ephemeral on the free plan). External TimescaleDB
+    is now **optional**: set `STORAGE_BACKEND=timescale` + `DATABASE_URL` only if
+    you want durable Timescale storage.
+  - The **portfolio FastAPI demo** optimizes a returns matrix POSTed by the
+    caller, so it does no network fetch.
+  - The **options** and **backtesting** apps fetch live market data (yfinance /
+    Finnhub) but ship bundled fixtures and `*_OFFLINE` flags so cloud egress
+    limits never hard-fail the demo — see each package's `DEPLOY.md`.
 - **Netlify** (`netlify.toml`): builds and publishes `apps/showcase-site`.
 
-See each package's `README.md` / `DEPLOY.md` for service-specific notes.
+Secrets the user sets in the Render dashboard: `FINNHUB_API_KEY` (optional, for
+live options spot) and `DATABASE_URL` (only if switching market-data to
+Timescale). See each package's `README.md` / `DEPLOY.md` for service-specific notes.
 
 ## License
 

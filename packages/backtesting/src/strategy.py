@@ -145,8 +145,25 @@ class OptimizationRebalanceStrategy(Strategy):
     backtester. This produces an out-of-sample, cost-aware equity curve of the
     optimized portfolio.
 
-    objective: "sharpe" (default) | "min_vol" | "min_cvar" | "risk_parity".
+    objective: one of "sharpe" (default), "min_vol", "min_cvar", "risk_parity",
+    "sortino", "hrp", "max_return_target_vol", "min_vol_target_return". The last
+    two are constrained objectives that need a target: pass ``target`` as the
+    annual volatility cap (for "max_return_target_vol") or the minimum annual
+    return (for "min_vol_target_return"). ``target`` is ignored by the other
+    objectives. An unknown objective falls back to "sharpe".
+
+    "hrp" (Hierarchical Risk Parity, López de Prado 2016) is solver-free and
+    derives long-only, fully-invested weights directly from the trailing
+    covariance structure via the optimizer's zero-arg ``optimize_hrp()`` (uses
+    the injected ``cov_matrix``), so it is robust when the covariance is
+    ill-conditioned. Black-Litterman is deliberately NOT exposed here: it
+    requires investor views (``P``/``Q`` matrices) to differ from the
+    equilibrium prior, and this walk-forward strategy has no view-generation
+    mechanism — with no views BL collapses to the prior, so it would add a heavy
+    dependency for no behavioral difference.
     """
+
+    _TARGET_OBJECTIVES = ("max_return_target_vol", "min_vol_target_return")
 
     def __init__(
         self,
@@ -155,12 +172,20 @@ class OptimizationRebalanceStrategy(Strategy):
         rebalance_freq: int = 21,
         objective: str = "sharpe",
         risk_free_rate: float = 0.02,
+        target: float | None = None,
     ):
         self.tickers = list(tickers)
         self.lookback = lookback
         self.rebalance_freq = rebalance_freq
         self.objective = objective
         self.risk_free_rate = risk_free_rate
+        if objective in self._TARGET_OBJECTIVES and target is None:
+            raise ValueError(
+                f"objective {objective!r} requires a `target` (annual volatility cap "
+                "for max_return_target_vol, minimum annual return for "
+                "min_vol_target_return)"
+            )
+        self.target = target
         self._bar = 0
         self._last_rebalance = -(10**9)
         self._rebalance_now = False
@@ -220,6 +245,19 @@ class OptimizationRebalanceStrategy(Strategy):
                 result = opt.optimize_risk_parity()
             elif self.objective == "min_vol":
                 result = opt.optimize_min_volatility()
+            elif self.objective == "sortino":
+                result = opt.optimize_sortino()
+            elif self.objective == "hrp":
+                result = opt.optimize_hrp()
+            elif self.objective == "max_return_target_vol":
+                result = opt.optimize_max_return_target_vol(float(self.target))  # type: ignore[arg-type]
+            elif self.objective == "min_vol_target_return":
+                # Clamp the requested return to what is achievable long-only on
+                # this window so a too-high target degrades to the max-return
+                # corner instead of raising and skipping the rebalance.
+                max_achievable = float(opt.mean_returns.max())
+                target = min(float(self.target), max_achievable)  # type: ignore[arg-type]
+                result = opt.optimize_min_vol_target_return(target)
             else:
                 result = opt.optimize_sharpe()
         except Exception:

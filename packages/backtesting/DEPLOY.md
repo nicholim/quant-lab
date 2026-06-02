@@ -73,6 +73,29 @@ untouched, and pointing one subdomain at an external host is fully supported.
 > app with a `200` rewrite in `netlify.toml`/`_redirects`. Dash serves assets from
 > absolute paths, so path-proxying is fiddly — prefer the subdomain above.
 
+## Live market data & the OFFLINE flag
+
+The dashboard fetches OHLCV from **yfinance** (via `YFinanceDataHandler` and the
+optimizer's `run_analysis`). yfinance egress from cloud IPs (including Render) is
+frequently rate-limited.
+
+Important difference from the options app: the backtesting data layer **raises**
+`MarketDataError` after its retries rather than auto-serving the bundled fixture
+on failure. The dashboard catches that and surfaces it as an in-UI error (it does
+**not** 500), but a rate-limited deploy will show an error instead of results.
+
+The escape hatch is the **`BACKTESTING_OFFLINE`** env var (also the `--offline`
+flag on `main.py`). When set, every fetch returns the bundled deterministic
+fixture without touching the network — the env flag overrides the dashboard's
+`offline=False` argument at the data layer.
+
+**Tradeoff / recommendation (mirrors options-pricing):** we deliberately do **not**
+default `BACKTESTING_OFFLINE=1` on Render, so live data shows when egress allows.
+A commented-out `envVars` stub for it exists on the `backtesting-dashboard` service
+in the root `render.yaml`. Because the backtesting layer raises (no per-request
+fixture fallback like the options app has), flip the flag **on** if you want a
+guaranteed-deterministic showcase that never errors on cloud rate limits.
+
 ## Notes
 
 - **Data persistence:** the DuckDB cache lives under `data/` (gitignored) and is

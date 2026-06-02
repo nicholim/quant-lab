@@ -42,6 +42,15 @@ private:
     void insert_order(const Order& order);
     void remove_order_from_book(uint64_t order_id);
 
+    // Would this incoming order match (take liquidity) right now? Used by
+    // POST_ONLY (reject if true) without mutating the book.
+    bool would_cross(const Order& order) const;
+
+    // How much of `order` could be filled immediately against the resting
+    // book, capped at its remaining quantity. Used by FOK to decide all-or-
+    // nothing before any mutation.
+    int available_fill_quantity(const Order& order) const;
+
     std::string symbol_;
 
     // Bids: descending price (highest first) -> FIFO queue

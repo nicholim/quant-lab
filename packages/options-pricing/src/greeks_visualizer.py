@@ -10,6 +10,7 @@ from .black_scholes import (
     black_scholes_price,
     delta,
     gamma,
+    implied_volatility_vec,
     rho,
     theta,
     vega,
@@ -249,3 +250,95 @@ def plot_market_iv_surface(
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.show()
+
+
+def solve_iv_surface(
+    chains_by_expiry: "dict[str, pd.DataFrame]",
+    spot: float,
+    expiry_years: "dict[str, float]",
+    r: float = 0.045,
+    option_type: str = "call",
+    q: float = 0.0,
+) -> "pd.DataFrame":
+    """Solve OUR implied vol per (strike, time-to-expiry) for a multi-expiry chain.
+
+    This is the data behind the *real* IV surface: for each expiry it solves our
+    own Black-Scholes IV from the market ``mid`` via the VECTORIZED solver
+    (:func:`implied_volatility_vec`) -- a whole chain in one broadcasted Newton
+    pass, no python loop per contract -- and stacks the results.
+
+    Args:
+        chains_by_expiry: maps expiry (``YYYY-MM-DD``) -> chain DataFrame with at
+            least ``strike`` and ``mid`` columns (e.g. from ``market_data``).
+        spot: underlying spot price.
+        expiry_years: maps each expiry -> its time-to-expiry in years (``T``).
+        r: risk-free rate; ``option_type``/``q`` passed through to the solver.
+
+    Returns:
+        A tidy DataFrame with columns ``expiry``, ``T``, ``strike``, ``iv``
+        (our solved IV as a fraction). Contracts whose IV does not solve are
+        dropped (the solver returns ``nan`` for them; never raises).
+    """
+    import numpy as np
+    import pandas as pd
+
+    frames: list[pd.DataFrame] = []
+    for expiry in sorted(chains_by_expiry):
+        chain = chains_by_expiry[expiry]
+        T = expiry_years[expiry]
+        strikes = chain["strike"].to_numpy(dtype=float)
+        mids = chain["mid"].to_numpy(dtype=float)
+        iv = implied_volatility_vec(mids, spot, strikes, T, r, option_type, q)
+        frame = pd.DataFrame({"expiry": expiry, "T": T, "strike": strikes, "iv": iv})
+        frame = frame[np.isfinite(frame["iv"].to_numpy())]
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame(columns=["expiry", "T", "strike", "iv"])
+    return pd.concat(frames, ignore_index=True)
+
+
+def plot_solved_iv_surface(
+    chains_by_expiry: "dict[str, pd.DataFrame]",
+    spot: float,
+    expiry_years: "dict[str, float]",
+    r: float = 0.045,
+    option_type: str = "call",
+    q: float = 0.0,
+    title: str | None = None,
+    save_path: str | None = None,
+) -> "pd.DataFrame":
+    """Plot a *real* implied-vol surface: OUR solved IV over strike x T.
+
+    Unlike :func:`plot_price_surface` (price at constant sigma), this solves the
+    implied volatility per contract from market mids via the vectorized solver
+    and plots IV as the z-axis over strike (y) and time-to-expiry in years (x).
+    Returns the tidy IV DataFrame from :func:`solve_iv_surface` for inspection.
+    Headless-safe (uses whatever backend is active; tests force ``Agg``).
+    """
+    surface = solve_iv_surface(chains_by_expiry, spot, expiry_years, r, option_type, q)
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection="3d")
+    for expiry in sorted(set(surface["expiry"])):
+        sub = surface[surface["expiry"] == expiry].sort_values("strike")
+        ax.plot(
+            sub["T"].to_numpy(dtype=float),
+            sub["strike"].to_numpy(dtype=float),
+            sub["iv"].to_numpy(dtype=float) * 100.0,
+            "o-",
+            alpha=0.8,
+            label=expiry,
+        )
+    ax.set_xlabel("Time to Expiry (years)")
+    ax.set_ylabel("Strike")
+    ax.set_zlabel("Implied Volatility (%)")  # type: ignore[attr-defined]
+    ax.set_title(title or "Solved Implied Volatility Surface")
+    if len(set(surface["expiry"])) > 0:
+        ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show()
+    return surface

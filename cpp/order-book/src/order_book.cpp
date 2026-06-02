@@ -6,10 +6,31 @@ OrderBook::OrderBook(const std::string& symbol) : symbol_(symbol) {}
 
 std::vector<Trade> OrderBook::add_order(Order order) {
     order.timestamp = std::chrono::steady_clock::now();
+
+    // --- Time-in-force pre-checks (no book mutation yet) ---
+
+    // POST_ONLY: maker-only. If it would take liquidity, reject it outright
+    // (no trades, nothing rests). Otherwise fall through and let it rest.
+    if (order.tif == TimeInForce::POST_ONLY && would_cross(order)) {
+        return {};
+    }
+
+    // FOK: all-or-nothing. Only proceed if the ENTIRE quantity can be filled
+    // immediately; otherwise kill it (no trades, book untouched).
+    if (order.tif == TimeInForce::FOK &&
+        available_fill_quantity(order) < order.remaining_quantity) {
+        return {};
+    }
+
     auto trades = match_order(order);
 
-    // If order still has remaining quantity, rest it in the book
-    if (!order.is_filled() && order.type == OrderType::LIMIT) {
+    // Rest any remainder only for GTC limit orders. MARKET never rests; IOC and
+    // FOK never rest (IOC cancels its remainder; FOK either filled fully above
+    // or never matched). POST_ONLY that reaches here did not cross, so it rests.
+    const bool rests =
+        order.type == OrderType::LIMIT &&
+        (order.tif == TimeInForce::GTC || order.tif == TimeInForce::POST_ONLY);
+    if (!order.is_filled() && rests) {
         insert_order(order);
     }
 
@@ -192,6 +213,47 @@ std::vector<Trade> OrderBook::match_order(Order& order) {
     }
 
     return trades;
+}
+
+bool OrderBook::would_cross(const Order& order) const {
+    if (order.side == Side::BUY) {
+        if (asks_.empty()) return false;
+        double best_ask = asks_.begin()->first;
+        // A market buy always crosses (if there's anything to take); a limit
+        // buy crosses only when it is willing to pay at least the best ask.
+        if (order.type == OrderType::MARKET) return true;
+        return order.price >= best_ask;
+    } else {
+        if (bids_.empty()) return false;
+        double best_bid = bids_.begin()->first;
+        if (order.type == OrderType::MARKET) return true;
+        return order.price <= best_bid;
+    }
+}
+
+int OrderBook::available_fill_quantity(const Order& order) const {
+    int need = order.remaining_quantity;
+    int available = 0;
+
+    if (order.side == Side::BUY) {
+        for (const auto& [ask_price, queue] : asks_) {
+            if (order.type == OrderType::LIMIT && ask_price > order.price) break;
+            for (const auto& resting : queue) {
+                available += resting.remaining_quantity;
+                if (available >= need) return need;
+            }
+        }
+    } else {
+        for (const auto& [bid_price, queue] : bids_) {
+            if (order.type == OrderType::LIMIT && bid_price < order.price) break;
+            for (const auto& resting : queue) {
+                available += resting.remaining_quantity;
+                if (available >= need) return need;
+            }
+        }
+    }
+
+    return available;
 }
 
 void OrderBook::insert_order(const Order& order) {

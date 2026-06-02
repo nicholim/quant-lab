@@ -66,7 +66,7 @@ class TestValidation:
 
     @pytest.mark.parametrize(
         "objective",
-        ["sharpe", "min_vol", "risk_parity", "sortino", "min_cvar", "both", "all"],
+        ["sharpe", "min_vol", "risk_parity", "sortino", "min_cvar", "hrp", "both", "all"],
     )
     def test_all_documented_objectives_valid(self, objective):
         _validate(AnalysisConfig(objective=objective))

@@ -2,13 +2,17 @@ import argparse
 
 from src.binomial_tree import BinomialTree
 from src.black_scholes import (
+    black_76_price,
     black_scholes_price,
+    charm,
     delta,
     gamma,
     implied_volatility,
     rho,
     theta,
+    vanna,
     vega,
+    volga,
 )
 from src.greeks_visualizer import (
     plot_greeks_vs_spot,
@@ -80,6 +84,16 @@ def main() -> None:
         print(f"  Theta:  {theta(S, K, T, r, sigma, opt_type):.6f} (daily)")
         print(f"  Vega:   {vega(S, K, T, r, sigma):.6f} (per 1%)")
         print(f"  Rho:    {rho(S, K, T, r, sigma, opt_type):.6f} (per 1%)")
+        print("  Higher-order Greeks:")
+        print(f"    Vanna:  {vanna(S, K, T, r, sigma):.6f}")
+        print(f"    Volga:  {volga(S, K, T, r, sigma):.6f}")
+        print(f"    Charm:  {charm(S, K, T, r, sigma, opt_type):.6f}")
+
+    # Black-76 — European option on a future/forward (no spot carry)
+    F = S * 1.02
+    print(f"\n--- Black-76 futures option (F={F}, K={K}, T={T}, r={r}, σ={sigma}) ---")
+    print(f"  Call: ${black_76_price(F, K, T, r, sigma, 'call'):.4f}")
+    print(f"  Put:  ${black_76_price(F, K, T, r, sigma, 'put'):.4f}")
 
     # Implied volatility
     market_price = 3.50
