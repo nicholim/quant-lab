@@ -1,0 +1,7 @@
+# Extra deps for the FastAPI demo wrapper (api/app.py).
+# Installed in addition to the core requirements.txt; the core lib's pinned
+# deps and public API are untouched. Used by render.yaml.
+-r requirements.txt
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4

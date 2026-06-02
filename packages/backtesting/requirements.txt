@@ -1,0 +1,17 @@
+numpy==1.26.2
+pandas==2.3.0
+matplotlib==3.10.3
+seaborn==0.13.2
+yfinance==0.2.65
+tabulate==0.10.0
+duckdb==1.5.3
+bokeh==3.9.0
+dash==4.1.0
+gunicorn==26.0.0
+pytest==8.4.2
+pytest-cov==7.1.0
+
+# Local one-way dependency: the portfolio optimization engine (single source of
+# truth for performance metrics + the optimizer behind OptimizationRebalanceStrategy).
+# Installs the sibling repo in editable mode; run from this repo's root.
+-e ../portfolio-optimization

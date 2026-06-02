@@ -1,0 +1,50 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---- C++ / CMake (order-book) ----
+build/
+cmake-build-*/
+_deps/
+cpp/order-book/lib/
+*.o
+*.a
+*.so
+*.dylib
+
+# ---- Node / Vite (showcase-site) ----
+node_modules/
+dist/
+.vite/
+
+# ---- Data / caches produced at runtime ----
+data/
+*.duckdb
+*.parquet
+
+# ---- Secrets / local env ----
+.env
+.env.local
+!.env.example
+
+# ---- OS / editor ----
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ---- Claude Code agent system (local tooling; contains machine-specific abs paths) ----
+.claude/

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cpp:
+    name: C++ core (CMake build + ctest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # ctest is wired up via enable_testing() in CMakeLists.txt. A demo smoke
+      # test runs today; GoogleTest unit tests are a later phase (test-engineer).
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  python:
+    name: Python viz (ruff + mypy + pytest)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build tools (for pytest C++ build fixture)
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r python/requirements.txt
+          pip install ruff mypy pytest pytest-cov
+
+      - name: Ruff lint
+        run: ruff check python tests
+
+      - name: Mypy
+        run: mypy python
+
+      - name: Pytest
+        run: pytest tests -v

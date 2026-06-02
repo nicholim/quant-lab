@@ -1,0 +1,16 @@
+# Netlify config for the monorepo's static showcase site (apps/showcase-site).
+# The build command cd's into the app and installs/builds there, so this works
+# regardless of any "base directory" set in the Netlify UI. publish is relative
+# to the repo root.
+[build]
+  command = "cd apps/showcase-site && npm ci && npm run build"
+  publish = "apps/showcase-site/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# SPA-style fallback so any path serves the single static page.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

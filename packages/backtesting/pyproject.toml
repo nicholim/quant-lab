@@ -1,0 +1,37 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# E501 (line-too-long) is left to the formatter, which intentionally does not
+# force-split long strings/comments. Avoids noisy churn on the existing codebase.
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+# Default to measuring coverage of the src package and failing under the gate.
+# The gate (80%) sits just below the measured baseline (~82%) so the suite
+# catches regressions without demanding churn on plotting/IO-heavy code.
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+omit = [
+    # Plotting and the Dash/Bokeh UI layer are exercised by hand, not unit tests.
+    "src/interactive.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+]

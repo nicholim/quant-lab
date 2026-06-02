@@ -1,0 +1,117 @@
+import argparse
+
+from src.binomial_tree import BinomialTree
+from src.black_scholes import (
+    black_scholes_price,
+    delta,
+    gamma,
+    implied_volatility,
+    rho,
+    theta,
+    vega,
+)
+from src.greeks_visualizer import (
+    plot_greeks_vs_spot,
+    plot_greeks_vs_time,
+    plot_payoff_diagram,
+    plot_volatility_surface,
+)
+from src.market_data import (
+    DEFAULT_RISK_FREE_RATE,
+    MarketDataError,
+    list_expirations,
+    price_chain,
+)
+
+
+def run_live(
+    symbol: str,
+    expiry: str | None,
+    option_type: str = "call",
+    offline: bool = False,
+) -> None:
+    """Fetch + price a REAL option chain and print it."""
+    print("=" * 72)
+    print(f"Live option chain — {symbol.upper()} ({option_type})")
+    print("=" * 72)
+    try:
+        if expiry is None:
+            expiry = list_expirations(symbol, offline=offline)[0]
+        priced = price_chain(symbol, expiry, option_type, r=DEFAULT_RISK_FREE_RATE, offline=offline)
+    except MarketDataError as exc:
+        print(f"\nMarket data unavailable: {exc}")
+        print("Tip: retry with --offline to use the bundled sample chain.")
+        return
+
+    spot = priced.attrs.get("spot")
+    print(
+        f"\nSpot: ${spot:.2f}   Expiry: {priced.attrs.get('expiry')}   "
+        f"T: {priced.attrs.get('T'):.4f}y   r: {DEFAULT_RISK_FREE_RATE:.3f}"
+    )
+    print(f"\n{'strike':>8} {'mid':>9} {'model':>9} {'our_iv':>8} {'mkt_iv':>8} {'mispr':>9}")
+    print("-" * 56)
+    for row in priced.itertuples(index=False):
+        our_iv = f"{row.our_iv:.1%}" if row.our_iv is not None else "   n/a"
+        print(
+            f"{row.strike:>8.2f} {row.mid:>9.2f} {row.model_price:>9.2f} "
+            f"{our_iv:>8} {row.market_iv:>8.1%} {row.mispricing:>9.2f}"
+        )
+
+
+def main() -> None:
+    S, K, T, r, sigma = 100.0, 105.0, 0.25, 0.05, 0.20
+
+    print("=" * 60)
+    print("Options Pricing Calculator")
+    print("=" * 60)
+
+    for opt_type in ["call", "put"]:
+        bs = black_scholes_price(S, K, T, r, sigma, opt_type)
+
+        tree_eu = BinomialTree(S, K, T, r, sigma, N=200, option_type=opt_type, american=False)
+        tree_am = BinomialTree(S, K, T, r, sigma, N=200, option_type=opt_type, american=True)
+
+        print(f"\n--- European {opt_type.upper()} (S={S}, K={K}, T={T}, r={r}, σ={sigma}) ---")
+        print(f"  Black-Scholes:  ${bs:.4f}")
+        print(f"  Binomial (EU):  ${tree_eu.price():.4f}")
+        print(f"  Binomial (AM):  ${tree_am.price():.4f}")
+        print(f"  Delta:  {delta(S, K, T, r, sigma, opt_type):.6f}")
+        print(f"  Gamma:  {gamma(S, K, T, r, sigma):.6f}")
+        print(f"  Theta:  {theta(S, K, T, r, sigma, opt_type):.6f} (daily)")
+        print(f"  Vega:   {vega(S, K, T, r, sigma):.6f} (per 1%)")
+        print(f"  Rho:    {rho(S, K, T, r, sigma, opt_type):.6f} (per 1%)")
+
+    # Implied volatility
+    market_price = 3.50
+    iv = implied_volatility(market_price, S, K, T, r, "call")
+    print(f"\nImplied Vol for market price ${market_price}: {iv:.4%}")
+
+    # Visualizations
+    print("\nGenerating visualizations...")
+    plot_greeks_vs_spot(K=K, T=T, r=r, sigma=sigma)
+    plot_greeks_vs_time(S=S, K=K, r=r, sigma=sigma)
+    plot_volatility_surface(S=S)
+    plot_payoff_diagram(K=K, premium=black_scholes_price(S, K, T, r, sigma, "call"))
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Options pricing calculator (textbook demo, or live chain pricing)."
+    )
+    parser.add_argument("--symbol", help="Ticker to price a live chain for (e.g. AAPL).")
+    parser.add_argument("--expiry", help="Expiry YYYY-MM-DD (default: nearest available).")
+    parser.add_argument("--type", choices=["call", "put"], default="call", dest="option_type")
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use the bundled sample chain instead of the network.",
+    )
+    return parser.parse_args(argv)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _args = _parse_args()
+    if _args.symbol:
+        run_live(_args.symbol, _args.expiry, _args.option_type, offline=_args.offline)
+    else:
+        main()

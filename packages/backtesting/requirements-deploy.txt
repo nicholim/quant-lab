@@ -1,0 +1,21 @@
+# Requirements for cloud deployment (Render / Railway / Fly.io).
+#
+# Differs from requirements.txt in ONE way: the optimization engine is installed
+# from git instead of the local editable sibling path (../portfolio-optimization-engine),
+# because the sibling repo does not exist on the deploy host.
+#
+# PREREQUISITE: push the engine repo to GitHub, then replace the URL below with
+# your actual repo (and pin a branch/tag if you like, e.g. ...@main).
+
+numpy
+pandas
+matplotlib
+seaborn
+yfinance
+tabulate
+duckdb
+bokeh
+dash
+gunicorn
+
+portfolio-optimization-engine @ git+https://github.com/nicholim/quant-lab.git

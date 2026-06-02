@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portfolio-optimization-engine"
+version = "0.1.0"
+description = "Modern Portfolio Theory optimization engine (efficient frontier, multi-objective optimization, Monte Carlo, performance metrics)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "seaborn",
+    "yfinance",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
+
+[project.scripts]
+portfolio-optimizer = "main:main"
+
+[tool.setuptools]
+packages = ["portfolio_optimization_engine"]
+py-modules = ["main"]
+
+[tool.setuptools.package-data]
+portfolio_optimization_engine = ["data/*.csv"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+files = ["portfolio_optimization_engine"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=portfolio_optimization_engine --cov-report=term-missing --cov-fail-under=90"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["portfolio_optimization_engine"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

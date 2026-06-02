@@ -1,0 +1,27 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.idea/
+.vscode/
+dist/
+build/
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.csv
+*.png
+results/
+.DS_Store
+
+# Bundled offline sample data ships with the package (override the root data/
+# ignore and this file's *.csv ignore above).
+!portfolio_optimization_engine/data/
+!portfolio_optimization_engine/data/*.csv

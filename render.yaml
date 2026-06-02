@@ -1,0 +1,104 @@
+# Render blueprint for the quant monorepo.
+# Each service sets `rootDir` so Render builds it from its package subdirectory
+# while still having the whole repo checked out (so co-located deps resolve).
+# Deploy: push the repo to GitHub, then Render Dashboard -> New -> Blueprint.
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  # ---- Backtesting dashboard (Dash / gunicorn) ----
+  # In the monorepo the optimizer is co-located, so requirements.txt's
+  # `-e ../portfolio-optimization` resolves at build time — no git-URL needed.
+  - type: web
+    name: backtesting-dashboard
+    runtime: python
+    plan: free
+    rootDir: packages/backtesting
+    branch: main
+    healthCheckPath: /
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn dashboard:server --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+  # ---- Options pricing calculator (Streamlit) ----
+  - type: web
+    name: options-pricing-calculator
+    runtime: python
+    plan: free
+    rootDir: packages/options-pricing
+    branch: main
+    healthCheckPath: /_stcore/health
+    buildCommand: pip install -r requirements.txt
+    startCommand: >-
+      streamlit run app.py
+      --server.port $PORT
+      --server.address 0.0.0.0
+      --server.headless true
+      --server.enableCORS false
+      --server.enableXsrfProtection false
+      --browser.gatherUsageStats false
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # Live spot quotes via Finnhub (free tier). Optional: if unset, spot
+      # falls back to yfinance. Chains/expirations are keyless (yfinance).
+      # Set this secret in the Render dashboard after the Blueprint applies.
+      - key: FINNHUB_API_KEY
+        sync: false
+      # The "Live market" tab fetches chains via yfinance, which is often
+      # rate-limited from cloud IPs. The app already falls back to the bundled
+      # sample chain on failure. To FORCE the deterministic offline demo,
+      # uncomment the line below (see DEPLOY.md "Live market data").
+      # - key: OPTIONS_PRICING_OFFLINE
+      #   value: "1"
+
+  # ---- Portfolio optimization FastAPI demo ----
+  - type: web
+    name: portfolio-optimization-api
+    runtime: python
+    plan: free
+    rootDir: packages/portfolio-optimization
+    branch: main
+    healthCheckPath: /health
+    autoDeploy: false
+    buildCommand: pip install -r requirements-api.txt && pip install -e .
+    startCommand: uvicorn api.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+
+  # ---- Market data ingestion daemon (Docker background worker) ----
+  # Needs Redis (managed Key Value, wired below) and an EXTERNAL TimescaleDB
+  # (Render's managed Postgres lacks the Timescale extension) — set DATABASE_URL
+  # as a secret. dockerfilePath is relative to rootDir.
+  - type: worker
+    name: market-data-pipeline
+    runtime: docker
+    plan: free
+    rootDir: packages/market-data
+    branch: main
+    dockerfilePath: ./Dockerfile
+    autoDeploy: false
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: market-data-cache
+          property: connectionString
+      - key: DATABASE_URL
+        sync: false # set to an external TimescaleDB URL (Timescale Cloud / Aiven)
+      - key: WS_URL
+        value: wss://stream.binance.com:9443/ws
+      - key: SYMBOLS
+        value: btcusdt,ethusdt,solusdt
+      - key: LOG_LEVEL
+        value: INFO
+      - key: BATCH_SIZE
+        value: "100"
+      - key: FLUSH_INTERVAL_SECONDS
+        value: "5"
+
+keyValue:
+  - name: market-data-cache
+    plan: free

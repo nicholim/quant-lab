@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320" font-family="-apple-system, Segoe UI, Roboto, sans-serif">
+  <rect width="640" height="320" fill="#0b1018"/>
+  <text x="20" y="30" fill="#e6edf3" font-size="16" font-weight="700">Order Book Depth (illustrative)</text>
+  <text x="20" y="50" fill="#9da7b3" font-size="11">Static placeholder — replace with a real export from python/simulator.py</text>
+
+  <!-- axes -->
+  <line x1="320" y1="70" x2="320" y2="280" stroke="#30363d" stroke-width="1"/>
+  <line x1="40" y1="280" x2="600" y2="280" stroke="#30363d" stroke-width="1"/>
+  <text x="40" y="300" fill="#9da7b3" font-size="10">lower price</text>
+  <text x="540" y="300" fill="#9da7b3" font-size="10">higher price</text>
+  <text x="300" y="66" fill="#9da7b3" font-size="10">mid</text>
+
+  <!-- bids (cumulative, stepped, green) -->
+  <polyline fill="#238636" fill-opacity="0.25" stroke="#3fb950" stroke-width="2"
+    points="40,280 90,280 90,250 140,250 140,215 190,215 190,175 240,175 240,130 290,130 290,100 320,100 320,280"/>
+
+  <!-- asks (cumulative, stepped, red) -->
+  <polyline fill="#da3633" fill-opacity="0.22" stroke="#f85149" stroke-width="2"
+    points="320,100 350,100 350,128 400,128 400,168 450,168 450,205 500,205 500,240 550,240 550,265 600,265 600,280 320,280"/>
+
+  <text x="150" y="120" fill="#3fb950" font-size="13" font-weight="600">BIDS</text>
+  <text x="470" y="120" fill="#f85149" font-size="13" font-weight="600">ASKS</text>
+</svg>

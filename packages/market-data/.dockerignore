@@ -1,0 +1,34 @@
+# Keep the image lean: only main.py + src/ + requirements.txt are needed.
+.git
+.github
+.gitignore
+tests
+README.md
+LICENSE
+.env
+.env.example
+.editorconfig
+.pre-commit-config.yaml
+pyproject.toml
+Dockerfile
+.dockerignore
+render.yaml
+
+# Tooling / caches
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.idea/
+.vscode/
+.DS_Store
+*.egg-info/
+dist/
+build/

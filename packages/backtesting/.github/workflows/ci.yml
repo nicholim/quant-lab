@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout (with sibling optimizer dependency)
+        uses: actions/checkout@v4
+
+      # requirements.txt installs `-e ../portfolio-optimization-engine`, a sibling
+      # repo. Check it out next to this one so the editable install resolves.
+      - name: Checkout portfolio-optimization-engine
+        uses: actions/checkout@v4
+        with:
+          repository: nicholim/quant-lab
+          path: portfolio-optimization-engine-src
+
+      - name: Place optimizer as sibling
+        run: |
+          mv portfolio-optimization-engine-src ../portfolio-optimization-engine
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff mypy pytest
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Format check (ruff)
+        run: ruff format --check .
+
+      - name: Type-check (mypy)
+        run: mypy
+
+      - name: Tests (pytest)
+        run: pytest -q

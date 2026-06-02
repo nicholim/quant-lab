@@ -1,0 +1,17 @@
+build/
+cmake-build-*/
+*.o
+*.so
+*.dylib
+*.exe
+.idea/
+.vscode/
+venv/
+__pycache__/
+*.pyc
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.env
+.DS_Store
