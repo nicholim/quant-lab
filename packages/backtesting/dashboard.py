@@ -26,12 +26,19 @@ from src.execution import SimulatedExecution
 from src.portfolio import Portfolio
 from src.strategy import OptimizationRebalanceStrategy
 
+# Maps the dashboard dropdown value -> the key ``run_analysis`` uses in its
+# ``results`` dict (see analysis._OBJECTIVE_METHODS). Every value here MUST be a
+# valid run_analysis objective so ``analysis["results"][OBJECTIVE_TO_KEY[obj]]``
+# always resolves; the dashboard calls run_analysis with objective="all", which
+# computes all of these. ``hrp`` (Hierarchical Risk Parity) is solver-free and a
+# valid run_analysis objective, so it slots in like the rest.
 OBJECTIVE_TO_KEY = {
     "sharpe": "max_sharpe",
     "min_vol": "min_vol",
     "risk_parity": "risk_parity",
     "sortino": "sortino",
     "min_cvar": "min_cvar",
+    "hrp": "hrp",
 }
 
 _MARKER = {
@@ -40,6 +47,7 @@ _MARKER = {
     "risk_parity": ("diamond", "#2ca02c"),
     "sortino": ("diamond", "#ff7f0e"),
     "min_cvar": ("diamond", "#9467bd"),
+    "hrp": ("diamond", "#8c564b"),
 }
 
 
@@ -190,8 +198,14 @@ def optimize(tickers, start, end, risk_free_rate, objective):
     return run_analysis(config), OBJECTIVE_TO_KEY[objective]
 
 
-def backtest_optimized(tickers, start, end, objective, store=None):
-    """Walk-forward rebalancing backtest of the chosen objective via the engine."""
+def backtest_optimized(tickers, start, end, objective, store=None, allow_short=False):
+    """Walk-forward rebalancing backtest of the chosen objective via the engine.
+
+    ``allow_short`` (default False = long-only, unchanged) threads straight into
+    ``Portfolio(allow_short=...)``. The optimizer emits long-only target weights,
+    so a short-enabled portfolio only matters once a rebalance reduces a holding
+    below a prior allocation; defaulting it off preserves prior behavior.
+    """
     data = YFinanceDataHandler(tickers, start, end, store=store)
     strategy = OptimizationRebalanceStrategy(
         tickers, lookback=252, rebalance_freq=21, objective=objective
@@ -199,7 +213,7 @@ def backtest_optimized(tickers, start, end, objective, store=None):
     return Backtest(
         data,
         strategy,
-        Portfolio(initial_capital=100_000),
+        Portfolio(initial_capital=100_000, allow_short=allow_short),
         SimulatedExecution(),
         strategy_name=f"Dashboard {objective}",
         store=store,
@@ -244,9 +258,20 @@ def build_app() -> Dash:
                         clearable=False,
                         style={"marginBottom": "14px"},
                         options=[
-                            {"label": k.replace("_", " ").title(), "value": k}
+                            {
+                                "label": k.replace("_", " ").upper()
+                                if k == "hrp"
+                                else k.replace("_", " ").title(),
+                                "value": k,
+                            }
                             for k in OBJECTIVE_TO_KEY
                         ],
+                    ),
+                    dcc.Checklist(
+                        id="allow-short",
+                        options=[{"label": " Allow short selling", "value": "short"}],
+                        value=[],  # default off = long-only (unchanged behavior)
+                        style={"marginBottom": "14px"},
                     ),
                     html.Button(
                         "Run",
@@ -326,15 +351,19 @@ def build_app() -> Dash:
         State("end", "value"),
         State("rf", "value"),
         State("objective", "value"),
+        State("allow-short", "value"),
         prevent_initial_call=True,
     )
-    def _run(_n, tickers_raw, start, end, rf, objective):
+    def _run(_n, tickers_raw, start, end, rf, objective, allow_short_value):
         tickers = [t.strip().upper() for t in (tickers_raw or "").split(",") if t.strip()]
+        allow_short = "short" in (allow_short_value or [])
         try:
             store = DataStore("data/dashboard.duckdb")
             try:
                 analysis, key = optimize(tickers, start, end, float(rf), objective)
-                analytics = backtest_optimized(tickers, start, end, objective, store=store)
+                analytics = backtest_optimized(
+                    tickers, start, end, objective, store=store, allow_short=allow_short
+                )
             finally:
                 store.close()
         except Exception as exc:  # surface errors in the UI rather than 500ing
@@ -349,7 +378,8 @@ def build_app() -> Dash:
             equity_figure(analytics),
             drawdown_figure(analytics),
             [html.H4("Out-of-sample backtest"), _table(backtest_metric_rows(analytics))],
-            f"Done: optimized {len(tickers)} assets and backtested '{objective}'.",
+            f"Done: optimized {len(tickers)} assets and backtested '{objective}'"
+            f"{' (short selling enabled)' if allow_short else ''}.",
         )
 
     return app

@@ -176,9 +176,12 @@ shape, so CSV runs are bar-identical to yfinance runs.
 both repos: choose tickers / dates / objective in the sidebar, click **Run**, and
 it (1) optimizes the portfolio with the engine — efficient frontier, weights,
 Monte Carlo VaR/CVaR — then (2) runs a walk-forward rebalancing **backtest** of
-that objective and shows the equity curve, drawdown, and beta/alpha. Everything
-else (`main.py`, the Python API) remains available; the dashboard is just an
-interactive front end over `run_analysis`, `Backtest`, and the Plotly figures.
+that objective and shows the equity curve, drawdown, and beta/alpha. The
+objective dropdown includes `hrp` (Hierarchical Risk Parity), and an **Allow
+short selling** checkbox (default off = long-only) threads into
+`Portfolio(allow_short=True)` for the backtest run. Everything else (`main.py`,
+the Python API) remains available; the dashboard is just an interactive front
+end over `run_analysis`, `Backtest`, and the Plotly figures.
 
 > This framework depends on the [portfolio-optimization-engine](../portfolio-optimization-engine)
 > as a one-way dependency (backtester → engine). `requirements.txt` installs it in
