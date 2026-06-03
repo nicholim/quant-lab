@@ -33,6 +33,7 @@ from src.market_data import (  # noqa: E402
     list_expirations,
     price_chain,
 )
+from src.vol_surface import fit_svi_surface, svi_smile  # noqa: E402
 
 # --- page + theme ----------------------------------------------------------
 st.set_page_config(
@@ -440,11 +441,31 @@ with surface_tab:
                 finally:
                     plt.close("all")
 
-                st.markdown("**Per-expiry IV smile (%)**")
-                pivot = surface.pivot_table(
-                    index="strike", columns="expiry", values="iv"
-                ).sort_index()
-                st.line_chart(pivot * 100.0)
+                st.markdown("**Per-expiry IV smile with SVI fit (%)**")
+                st.caption(
+                    "Points are OUR solved IV; the solid lines are a Gatheral "
+                    "raw-SVI fit per expiry (a smile fit/interpolation — not an "
+                    "arbitrage-free surface)."
+                )
+                # Fit raw SVI per expiry and overlay the fitted smile on the
+                # solved-IV points. Each expiry gets a points column plus an
+                # "<expiry> SVI" line column on a shared strike index.
+                svi_fits = fit_svi_surface(surface, spot, r=DEFAULT_RISK_FREE_RATE, q=0.0)
+                smile_cols: dict[str, "pd.Series"] = {}
+                for expiry in sorted(set(surface["expiry"])):
+                    sub = surface[surface["expiry"] == expiry].sort_values("strike")
+                    strikes = sub["strike"].to_numpy(dtype=float)
+                    smile_cols[expiry] = pd.Series(
+                        sub["iv"].to_numpy(dtype=float) * 100.0, index=strikes
+                    )
+                    params = svi_fits.get(expiry)
+                    if params is not None:
+                        T_exp = float(sub["T"].iloc[0])
+                        forward = spot * np.exp(DEFAULT_RISK_FREE_RATE * T_exp)
+                        fitted = svi_smile(params, T_exp, strikes, forward) * 100.0
+                        smile_cols[f"{expiry} SVI"] = pd.Series(fitted, index=strikes)
+                smile_df = pd.DataFrame(smile_cols).sort_index()
+                st.line_chart(smile_df)
                 with st.expander("Solved IV table"):
                     st.dataframe(surface, width="stretch")
 

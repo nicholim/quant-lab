@@ -26,6 +26,7 @@ from src.market_data import (
     list_expirations,
     price_chain,
 )
+from src.monte_carlo import monte_carlo_price
 
 
 def run_live(
@@ -94,6 +95,16 @@ def main() -> None:
     print(f"\n--- Black-76 futures option (F={F}, K={K}, T={T}, r={r}, σ={sigma}) ---")
     print(f"  Call: ${black_76_price(F, K, T, r, sigma, 'call'):.4f}")
     print(f"  Put:  ${black_76_price(F, K, T, r, sigma, 'put'):.4f}")
+
+    # Monte-Carlo pricer (under GBM, antithetic + control variate) vs closed-form
+    print("\n--- Monte-Carlo (GBM, antithetic + control variate) vs closed-form ---")
+    for opt_type in ["call", "put"]:
+        bs = black_scholes_price(S, K, T, r, sigma, opt_type)
+        mc = monte_carlo_price(S, K, T, r, sigma, opt_type, n_paths=200_000, seed=42)
+        print(
+            f"  {opt_type.upper():>4}: MC ${mc.price:.4f} ± {mc.std_error:.4f} (SE)  "
+            f"vs BS ${bs:.4f}  (diff {abs(mc.price - bs):.4f})"
+        )
 
     # Implied volatility
     market_price = 3.50

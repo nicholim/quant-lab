@@ -141,3 +141,30 @@ def test_app_no_raw_exceptions_in_widgets():
     at = _run_app_offline()
     assert not at.exception
     assert len(at.error) == 0
+
+
+def test_svi_overlay_path_fits_offline_surface():
+    """The SVI overlay the IV-surface tab draws fits the offline solved surface.
+
+    Exercises the exact functions the tab calls for the overlay (fit_svi_surface
+    + svi_smile against the solved-IV DataFrame) so the on-chart SVI line is
+    proven to compute offline without a display.
+    """
+    import numpy as np
+
+    from src.greeks_visualizer import solve_iv_surface
+    from src.vol_surface import fit_svi_surface, svi_smile
+
+    chains, years, spot = _offline_multi_expiry("call")
+    surface = solve_iv_surface(chains, spot, years, option_type="call")
+    assert not surface.empty
+    fits = fit_svi_surface(surface, spot)
+    assert fits
+    for expiry, params in fits.items():
+        sub = surface[surface["expiry"] == expiry]
+        T = float(sub["T"].iloc[0])
+        forward = spot * np.exp(0.045 * T)
+        strikes = sub["strike"].to_numpy(dtype=float)
+        fitted = svi_smile(params, T, strikes, forward)
+        assert fitted.shape == strikes.shape
+        assert np.all(fitted > 0)

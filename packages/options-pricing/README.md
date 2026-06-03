@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-209%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~99%25-brightgreen.svg)](pyproject.toml)
 
 A compact, readable options-pricing library: **Black-Scholes-Merton** closed-form pricing, a
@@ -15,7 +15,7 @@ A compact, readable options-pricing library: **Black-Scholes-Merton** closed-for
 
 Most "learn options pricing" code is either a one-file gist with no tests, or a heavyweight
 institutional library (QuantLib) whose surface area hides the math. This project sits in between:
-small enough to read end-to-end (~4 source files), correct enough to trust (209 tests cross-checked
+small enough to read end-to-end (a handful of focused source files), correct enough to trust (238 tests cross-checked
 against textbook reference values and put-call parity, ~99% coverage), and packaged with a CLI and
 a web UI so you can actually *use* it. It can also pull a **real option chain** from free data and
 show you, per contract, where its own Black-Scholes price disagrees with the live market mid.
@@ -63,12 +63,14 @@ Pure-function pricing core (`src/`), consumed by two interchangeable front ends 
 | **Implied volatility** | `implied_volatility` | Newton-Raphson; returns `None` on non-convergence / sub-intrinsic input |
 | **Vectorized / batch API** | `black_scholes_price_vec`, `greeks_vec`, `implied_volatility_vec` | Price + all Greeks + IV across a whole chain at once via NumPy broadcasting (no per-contract Python loop); accepts arrays/`pandas.Series` for strike/σ/T. Numerically identical to the scalar functions elementwise; the batch IV solver returns `nan` per element on impossible/non-converged inputs |
 | **Real IV surface** | `solve_iv_surface` / `plot_solved_iv_surface` (`src/greeks_visualizer.py`) | Solves *our* IV per (strike, time-to-expiry) across multiple expiries via the vectorized solver and plots IV as the z-axis — a genuine implied-vol surface, distinct from the constant-σ `plot_price_surface` |
+| **Monte-Carlo pricer** | `monte_carlo_price` → `MCResult(price, std_error)` (`src/monte_carlo.py`) | European call/put **under GBM** (same risk-neutral dynamics as Black-Scholes) with **antithetic variates + a Black-Scholes control variate** for variance reduction; seeded NumPy `Generator` for reproducibility. Returns the price **and** its standard error; validated to converge to the closed-form `black_scholes_price` within ~3 SE. Not a stochastic-vol / exotic engine. |
+| **SVI vol-surface fit** | `fit_svi_slice` / `fit_svi_surface` / `svi_total_variance` / `svi_smile` (`src/vol_surface.py`) | Gatheral **raw SVI** (5-param) fit to the solved IV surface, per expiry, via `scipy.optimize.least_squares` on total variance `w = σ²·T` vs log-moneyness `k = ln(K/F)`. A smile **fit / interpolation** of the observed surface — *not* a calendar/butterfly-arbitrage-free guarantee. |
 | **Edge-case handling** | core | `T→0` returns intrinsic value; `σ→0` uses deterministic forward |
 | **Tree visualization** | `BinomialTree.build_tree` | Full `(N+1, N+1)` price & value lattices |
 | **Charts** | `src/greeks_visualizer.py` | Greeks vs spot/time, 3D price surface (`plot_price_surface`), payoff diagrams, **real IV smile/surface** (`plot_market_iv_smile` / `plot_market_iv_surface`) from market data |
 | **Live market data** | `src/market_data.py` | Price REAL option chains from FREE data: chains/expirations via yfinance, spot via Finnhub (`FINNHUB_API_KEY`) with yfinance fallback; `price_chain` adds `model_price`, `our_iv`, `mispricing`. Bundled offline sample chain (`--offline` / `OPTIONS_PRICING_OFFLINE=1`) keeps the demo running with no network |
 | **CLI demo** | `main.py` | Textbook demo (no args) **or** `python main.py --symbol AAPL [--expiry … --type call\|put --offline]` to price a live chain |
-| **Web app** | `app.py` | Streamlit dashboard: Calculator tab (parameter sliders) + Live market tab (fetch + price a chain, IV smile) + IV surface tab (multi-expiry solved IV surface + per-expiry smile + vectorized batch pricing, offline-safe) |
+| **Web app** | `app.py` | Streamlit dashboard: Calculator tab (parameter sliders) + Live market tab (fetch + price a chain, IV smile) + IV surface tab (multi-expiry solved IV surface + per-expiry smile with the **raw-SVI fit overlaid** + vectorized batch pricing, offline-safe) |
 
 ## Tech Stack
 
@@ -108,6 +110,19 @@ BinomialTree(S=100, K=105, T=0.25, r=0.05, sigma=0.2, N=200,
 
 # Implied volatility from a market price
 implied_volatility(market_price=3.50, S=100, K=105, T=0.25, r=0.05, option_type="call")  # 0.2531
+```
+
+```python
+# Monte-Carlo price (under GBM) with variance reduction — converges to closed-form BS
+from src.monte_carlo import monte_carlo_price
+mc = monte_carlo_price(S=100, K=105, T=0.25, r=0.05, sigma=0.2,
+                       option_type="call", n_paths=200_000, seed=42)
+mc.price, mc.std_error   # ~2.49 ± ~0.009 (vs BS 2.4779)
+
+# Fit a raw-SVI smile to a solved IV surface (the solve_iv_surface output)
+from src.vol_surface import fit_svi_surface, svi_smile
+fits = fit_svi_surface(surface_df, spot=100.0)        # {expiry: SVIParams(a,b,rho,m,sigma)}
+svi_smile(fits["2026-09-18"], T=0.3, strikes=[90, 100, 110], forward=100.0)  # fitted IVs
 ```
 
 ### Run the CLI demo
@@ -267,8 +282,10 @@ This is a small, readable vanilla-options pricer. The honest positioning:
 | **American options** | **Yes** (CRR binomial) | **No** | Yes |
 | Binomial / lattice tree | Yes (CRR) | No | Yes (many) |
 | Exotics, barriers, Asians | No | No | Yes |
-| Stochastic vol (Heston), Monte Carlo, finite difference | No | No | Yes |
-| Vol surface construction / calibration | No (plots only) | No | Yes |
+| **Monte-Carlo pricing** | **Yes** (GBM + antithetic & control-variate variance reduction) | **No** | Yes |
+| Stochastic vol (Heston), finite-difference PDE | No | No | Yes |
+| **Vol-surface fit / smile interpolation** | **Yes** (raw-SVI fit per expiry) | **No** | Yes |
+| Arbitrage-free vol-surface calibration | No (SVI fit only) | No | Yes |
 | Term-structure / yield-curve bootstrapping | No | No | Yes |
 | **Prices REAL live option chains** (free data) | **Yes** (yfinance + Finnhub) | **No** (no data layer) | **No** (no built-in free feed) |
 | **Per-contract IV solved from live mid** | **Yes** (`price_chain` → `our_iv`/`mispricing`) | **No** | N/A (no feed) |
@@ -281,8 +298,14 @@ This is a small, readable vanilla-options pricer. The honest positioning:
   pure vanilla-BS *calculators* with no data feed, and `QuantLib` ships no built-in free data source —
   here a single call (`price_chain`) pulls a real chain, solves IV per contract from the market mid,
   and surfaces `model_price`/`our_iv`/`mispricing` so you can see where the model disagrees with the tape.
-- **What it intentionally does not do:** exotics, stochastic-volatility models, Monte Carlo,
-  finite-difference PDE solvers, vol-surface calibration, or curve bootstrapping.
+- **Monte Carlo & vol-surface fit:** `monte_carlo_price` prices European calls/puts **under GBM**
+  with antithetic + control-variate variance reduction (validated to converge to the closed-form BS
+  price within ~3 SE), and `fit_svi_surface` fits a Gatheral raw-SVI smile to the solved IV surface
+  per expiry. Both are honest about scope — the MC is *not* a stochastic-vol engine and the SVI fit is
+  a *smile interpolation*, not an arbitrage-free calibration.
+- **What it intentionally does not do:** exotics/barriers/Asians, stochastic-volatility models
+  (Heston), finite-difference PDE solvers, arbitrage-free vol-surface calibration, or curve
+  bootstrapping.
 - **Who it's for:** learners, interviewers/interviewees, and anyone who wants a hackable vanilla
   pricer. For production derivatives work — exotics, calibration, multi-asset — reach for **QuantLib**.
 
@@ -294,7 +317,7 @@ for the broader ecosystem.
 
 ## Correctness checks
 
-Accuracy here is validated, not asserted. The test suite (209 tests, ~99% branch coverage) includes
+Accuracy here is validated, not asserted. The test suite (238 tests, ~99% branch coverage) includes
 real cross-checks any practitioner would recognize — these are *correctness* checks, not performance
 benchmarks:
 
@@ -315,7 +338,7 @@ benchmarks:
 Run them:
 
 ```bash
-pytest                       # all 209 tests + coverage gate (95%)
+pytest                       # all 238 tests + coverage gate (95%)
 pytest tests/test_accuracy.py -v
 ```
 
