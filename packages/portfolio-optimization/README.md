@@ -4,11 +4,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-259%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-285%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~96%25-brightgreen.svg)](pyproject.toml)
 
 A focused, dependency-light Modern Portfolio Theory optimizer: a true solved efficient frontier,
-seven optimization objectives (incl. Hierarchical Risk Parity), Black–Litterman views, Ledoit–Wolf
+eight optimization objectives (incl. Hierarchical Risk Parity, min-CVaR and min-CDaR LPs),
+opt-in transaction-cost-aware rebalancing, Black–Litterman views, Ledoit–Wolf
 covariance shrinkage, flexible weight constraints, Monte Carlo risk projection, and a standalone
 performance-metrics module — usable as a library, a CLI, or a demo HTTP API.
 
@@ -38,6 +39,7 @@ graph TD
     OBJ --> O3[Risk Parity]
     OBJ --> O4[Max Sortino]
     OBJ --> O5[Min CVaR]
+    OBJ --> O5b[Min CDaR]
     OBJ --> O6[Target ret/vol]
     RET --> MET[metrics.py<br/>CAGR · DD · Sortino · Calmar<br/>Omega · beta/alpha]
     OPT --> MC[Monte Carlo<br/>VaR / CVaR]
@@ -66,8 +68,10 @@ graph TD
   - **Hierarchical Risk Parity (HRP)** — López de Prado's solver-free, correlation-clustering allocation (`optimize_hrp()`)
   - **Max Sortino** — maximizes return per unit of downside deviation
   - **Min CVaR** — minimizes historical expected shortfall via the Rockafellar–Uryasev linear program
+  - **Min CDaR** — minimizes Conditional Drawdown-at-Risk (the mean of the worst-tail drawdowns) via a Chekhlov–Uryasev–Zabarankin LP (`optimize_min_cdar(confidence=0.95)`). Uses the **uncompounded** cumulative-return path (`cumsum`) to keep the LP linear; this arithmetic drawdown is *related but not equal* to the geometric (`cumprod`) max drawdown in `metrics.py` that the backtester reports
   - **Target-based** — max return for a target volatility, or min volatility for a target return
 - **Flexible constraints** — per-asset and per-group min/max weight bounds, optional shorting
+- **Transaction-cost-aware rebalancing** (opt-in) — pass `current_weights` (the prior allocation, array or ticker-dict) plus `transaction_cost` (scalar or per-asset per-unit-turnover cost) to the SLSQP objectives (`optimize_sharpe`, `optimize_min_volatility`, `optimize_sortino`, and the two target-based solves) to penalize `|w − w_prev|` (L1 turnover). Defaults (`current_weights=None`, `transaction_cost=0.0`) leave every result byte-identical to the cost-free optimum. A backtester could pass its prior rebalance weights to penalize churn between rebalances (no changes to the backtesting package required)
 - **Performance metrics** — CAGR, max drawdown, Sortino, Calmar, Omega, plus beta/alpha vs a benchmark
 - **Monte Carlo Simulation** — Project portfolio value using geometric Brownian motion with VaR and CVaR estimation
 - **Result export** — write results and metrics to CSV / JSON for downstream tools (e.g. a backtest framework)
@@ -94,6 +98,8 @@ big frameworks, but stays small, readable, and dependency-light.
 | Hierarchical Risk Parity (HRP) | Yes (solver-free, `optimize_hrp`) | Yes | Yes (HRP + HERC) | Yes | DIY |
 | Sortino / semivariance | Yes (max Sortino) | Yes (semivariance frontier) | Yes | Yes | DIY |
 | CVaR / expected shortfall | Yes (Rockafellar–Uryasev LP) | Yes (`EfficientCVaR`) | Yes (many tail measures) | Yes | DIY |
+| CDaR / drawdown-at-risk | Yes (Chekhlov–Uryasev–Zabarankin LP, `optimize_min_cdar`) | No | Yes (`EfficientFrontier`-style DaR/CDaR) | No | DIY |
+| Transaction-cost / turnover-aware rebalancing | Yes (opt-in L1 turnover penalty on SLSQP objectives) | Yes (`add_objective` L1/L2) | Yes | Yes | DIY |
 | Per-asset & group weight bounds, shorting | Yes | Yes | Yes | Yes | DIY |
 | Black–Litterman / factor / clustering models | Black–Litterman + HRP | Black–Litterman | Extensive | Extensive (sklearn estimators) | DIY |
 | Walk-forward / purged cross-validation | No | No | Limited | Yes (its headline feature) | No |
@@ -101,8 +107,9 @@ big frameworks, but stays small, readable, and dependency-light.
 | Solver stack | scipy `SLSQP` + `linprog` | cvxpy | cvxpy | cvxpy | (is the solver) |
 | Core dependencies | numpy/pandas/scipy | + cvxpy | + cvxpy | + sklearn/cvxpy | cvxpy |
 
-**What this engine does well:** a compact, readable MPT reference — seven objectives (incl.
-Hierarchical Risk Parity), flexible constraints, an empirical-CVaR LP, Black–Litterman views,
+**What this engine does well:** a compact, readable MPT reference — eight objectives (incl.
+Hierarchical Risk Parity, an empirical-CVaR LP and an empirical-CDaR LP), flexible constraints,
+opt-in transaction-cost (turnover) aware rebalancing, Black–Litterman views,
 opt-in Ledoit–Wolf shrinkage, and a self-contained `metrics` + Monte Carlo layer with no heavy
 solver dependency. It draws **both** a Dirichlet random-portfolio cloud (`efficient_frontier`,
 for the scatter background) **and** the true swept convex boundary (`solved_efficient_frontier`,
@@ -169,7 +176,7 @@ python main.py \
 python main.py --config my_run.json
 ```
 
-Key flags: `--objective {sharpe,min_vol,risk_parity,sortino,min_cvar,hrp,both,all}`,
+Key flags: `--objective {sharpe,min_vol,risk_parity,sortino,min_cvar,min_cdar,hrp,both,all}`,
 `--benchmark TICKER`, `--export-format {csv,json,both,none}`, `--output-dir`,
 `--num-portfolios`, `--risk-free-rate`, `--random-state`, `--no-plots`, `--offline`.
 
@@ -273,6 +280,12 @@ risk_parity = optimizer.optimize_risk_parity()
 hrp = optimizer.optimize_hrp()  # Hierarchical Risk Parity (no solver, long-only)
 sortino = optimizer.optimize_sortino()
 min_cvar = optimizer.optimize_min_cvar(confidence=0.95)
+min_cdar = optimizer.optimize_min_cdar(confidence=0.95)  # Conditional Drawdown-at-Risk (LP)
+
+# Transaction-cost-aware rebalancing (opt-in; SLSQP objectives only).
+# Penalize L1 turnover from a prior allocation; defaults (None / 0.0) = unchanged.
+prior = {"AAPL": 0.5, "MSFT": 0.3, "GOOGL": 0.2}
+rebalanced = optimizer.optimize_sharpe(current_weights=prior, transaction_cost=0.5)
 
 # Black-Litterman: blend the equilibrium prior with investor views.
 # A bullish absolute view that asset 0 returns 15% annually:
@@ -325,7 +338,7 @@ portfolio-optimization-engine/
 ├── api/app.py              # Thin FastAPI demo wrapper (calls the public API; no logic duplicated)
 ├── render.yaml             # Render Blueprint for the FastAPI demo
 ├── examples/               # Runnable workflows (quickstart_offline.py, black_litterman_demo.py — no network)
-├── streamlit_app.py        # Streamlit demo UI (input sources, 8 objectives, frontier, Black-Litterman form)
+├── streamlit_app.py        # Streamlit demo UI (input sources, 9 objectives, frontier, Black-Litterman form)
 ├── tests/                  # pytest suite (259 tests, ~96% coverage)
 └── portfolio_optimization_engine/   # importable package
     ├── optimizer.py         # PortfolioOptimizer (frontier, all objectives, flexible constraints)
@@ -357,8 +370,8 @@ What it shows:
 
 - **Input source** — bundled offline sample, uploaded/entered returns, or a live
   yfinance fetch.
-- **8 objectives** — max Sharpe, min volatility, risk parity, HRP, max Sortino,
-  min CVaR, and the two target-based solves, plus an "All objectives" comparison.
+- **9 objectives** — max Sharpe, min volatility, risk parity, HRP, max Sortino,
+  min CVaR, min CDaR, and the two target-based solves, plus an "All objectives" comparison.
 - **Efficient frontier** — the true *solved* frontier
   (`solved_efficient_frontier`), not just the random-portfolio cloud.
 - **Black-Litterman mini-form** — enter views (pick matrix `P` + target returns
@@ -387,7 +400,10 @@ Endpoints:
 | POST   | `/optimize/black-litterman` | Body: `{tickers, returns, views[], market_weights?, tau, risk_aversion}` → weights + posterior/prior returns. |
 
 Supported `/optimize` objectives: `sharpe`, `min_volatility`, `risk_parity`,
-`sortino`, `min_cvar`, `hrp`. **Black–Litterman** has its own endpoint because it
+`sortino`, `min_cvar`, `min_cdar`, `hrp`. The `/optimize` body also accepts optional
+`current_weights` (ticker→prior weight) + `transaction_cost` for turnover-aware
+rebalancing on the SLSQP objectives (`sharpe`/`min_volatility`/`sortino`); both absent
+leaves the result unchanged. **Black–Litterman** has its own endpoint because it
 takes investor *views*: each view is `{assets: {ticker: loading}, q, confidence?}`
 (absolute or relative). With no views the optimization runs on the market-implied
 equilibrium prior; the response echoes both the `prior_returns` and the

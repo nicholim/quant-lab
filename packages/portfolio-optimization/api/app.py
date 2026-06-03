@@ -27,7 +27,8 @@ app = FastAPI(
     description=(
         "Thin demo wrapper over the PortfolioOptimizer public API "
         "(Modern Portfolio Theory: max Sharpe, min volatility, risk parity, "
-        "max Sortino, min CVaR, Hierarchical Risk Parity, and Black-Litterman). "
+        "max Sortino, min CVaR, min CDaR, Hierarchical Risk Parity, and "
+        "Black-Litterman; opt-in transaction-cost-aware rebalancing). "
         "Send daily returns; get optimal weights + metrics."
     ),
     version="0.1.0",
@@ -41,8 +42,14 @@ _OBJECTIVES = {
     "risk_parity": "optimize_risk_parity",
     "sortino": "optimize_sortino",
     "min_cvar": "optimize_min_cvar",
+    "min_cdar": "optimize_min_cdar",
     "hrp": "optimize_hrp",
 }
+
+# Objectives whose SLSQP path accepts the opt-in turnover penalty
+# (current_weights / transaction_cost). The LP/solver-free objectives
+# (min_cvar, min_cdar, hrp) ignore those kwargs.
+_TXN_AWARE = {"sharpe", "min_volatility", "sortino"}
 
 
 class OptimizeRequest(BaseModel):
@@ -59,6 +66,23 @@ class OptimizeRequest(BaseModel):
         description=f"One of: {', '.join(_OBJECTIVES)}.",
     )
     risk_free_rate: float = Field(0.02, description="Annual risk-free rate.")
+    current_weights: dict[str, float] | None = Field(
+        None,
+        description=(
+            "Optional prior allocation (ticker -> weight) for transaction-cost-aware "
+            "rebalancing. When set together with `transaction_cost`, an L1 turnover "
+            "penalty `|w - w_prev|` is added to the objective. Absent => unchanged. "
+            "Only the SLSQP objectives (sharpe, min_volatility, sortino) honor it."
+        ),
+    )
+    transaction_cost: float = Field(
+        0.0,
+        ge=0.0,
+        description=(
+            "Per-unit turnover cost applied to `|w - current_weights|`. Default 0.0 "
+            "(no penalty); ignored unless `current_weights` is also supplied."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -219,8 +243,22 @@ def optimize(req: OptimizeRequest) -> OptimizeResponse:
 
     optimizer = _build_optimizer(req.tickers, req.returns, req.risk_free_rate)
 
+    # Opt-in transaction-cost-aware rebalancing: only thread the turnover kwargs
+    # through when the client supplied a prior allocation AND the objective's
+    # SLSQP path supports them. Absent => zero-arg call, unchanged behavior.
+    kwargs: dict = {}
+    if req.current_weights is not None and req.objective in _TXN_AWARE:
+        unknown = set(req.current_weights) - set(req.tickers)
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"current_weights references unknown tickers: {sorted(unknown)}",
+            )
+        kwargs["current_weights"] = req.current_weights
+        kwargs["transaction_cost"] = req.transaction_cost
+
     try:
-        result = getattr(optimizer, method_name)()
+        result = getattr(optimizer, method_name)(**kwargs)
     except ValueError as exc:
         # Solver/feasibility failures from the existing API -> client error.
         raise HTTPException(status_code=422, detail=str(exc)) from exc

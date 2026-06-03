@@ -188,6 +188,51 @@ class PortfolioOptimizer:
             )
         return arr
 
+    def _normalize_current_weights(self, current_weights) -> np.ndarray | None:
+        """Normalize a prior-weights spec (array / ticker-dict / None) to a vector.
+
+        Returns ``None`` when ``current_weights is None`` (the default, no-cost
+        path). A dict maps tickers to their prior weight (absent tickers default
+        to ``0.0``); an array must already be in ``self.tickers`` order.
+        """
+        if current_weights is None:
+            return None
+        if isinstance(current_weights, dict):
+            out = np.zeros(self.num_assets, dtype=float)
+            idx = {t: i for i, t in enumerate(self.tickers)}
+            for ticker, value in current_weights.items():
+                if ticker not in idx:
+                    raise ValueError(f"Unknown ticker in current_weights: '{ticker}'")
+                out[idx[ticker]] = float(value)
+            return out
+        arr = np.asarray(current_weights, dtype=float)
+        if arr.shape != (self.num_assets,):
+            raise ValueError(f"current_weights must have length {self.num_assets}, got {arr.shape}")
+        return arr
+
+    def _wrap_turnover(self, objective_fn, current_weights, transaction_cost):
+        """Wrap an SLSQP objective with an opt-in L1 turnover penalty.
+
+        With ``current_weights is None`` (the default) the original ``objective_fn``
+        is returned UNCHANGED, so the no-cost path is byte-identical -- the budget
+        and the optimum are exactly what they were before this feature existed.
+        Otherwise the returned objective adds
+        ``sum(transaction_cost * |w - w_prev|)`` -- a smooth-enough L1 turnover
+        penalty SLSQP handles directly (no auxiliary variables, no new dependency).
+        ``transaction_cost`` may be a scalar (uniform per-unit cost) or a per-asset
+        array. A zero cost leaves the optimum unchanged but still uses the wrapper.
+        """
+        prior = self._normalize_current_weights(current_weights)
+        if prior is None:
+            return objective_fn
+        cost = np.asarray(transaction_cost, dtype=float)
+
+        def penalized(w):
+            turnover = np.sum(cost * np.abs(np.asarray(w) - prior))
+            return objective_fn(w) + float(turnover)
+
+        return penalized
+
     def _group_masks(self, groups) -> list[tuple[np.ndarray, float, float]]:
         """Translate a groups dict into (mask, gmin, gmax) tuples."""
         if not groups:
@@ -366,11 +411,29 @@ class PortfolioOptimizer:
 
     # --- Objectives ---
 
+    @staticmethod
+    def _pop_txn_kwargs(cons: dict) -> tuple[object, object]:
+        """Pull the opt-in transaction-cost kwargs out of ``**cons`` (default off).
+
+        Returns ``(current_weights, transaction_cost)``; with both absent this is
+        ``(None, 0.0)`` so :meth:`_wrap_turnover` is a no-op and the solve is
+        byte-identical to the pre-feature behavior. Leaving them out of ``cons``
+        keeps the rest of ``cons`` valid for ``_build_bounds_constraints``.
+        """
+        return cons.pop("current_weights", None), cons.pop("transaction_cost", 0.0)
+
     def optimize_sharpe(self, **cons) -> PortfolioResult:
-        """Find the portfolio that maximizes the Sharpe ratio."""
+        """Find the portfolio that maximizes the Sharpe ratio.
+
+        Supports opt-in transaction-cost-aware rebalancing via ``current_weights``
+        (the prior allocation, array or ticker-dict) and ``transaction_cost`` (a
+        scalar or per-asset per-unit-turnover cost). With both at their defaults
+        (``None`` / ``0.0``) the result is identical to the cost-free optimum.
+        """
+        cw, tc = self._pop_txn_kwargs(cons)
         bounds, extra = self._build_bounds_constraints(**cons)
         weights = self._solve(
-            lambda w: -self.portfolio_sharpe(w),
+            self._wrap_turnover(lambda w: -self.portfolio_sharpe(w), cw, tc),
             bounds=bounds,
             extra_constraints=extra,
             label="Sharpe optimization",
@@ -378,10 +441,15 @@ class PortfolioOptimizer:
         return self._make_result(weights, "sharpe")
 
     def optimize_min_volatility(self, **cons) -> PortfolioResult:
-        """Find the minimum volatility portfolio."""
+        """Find the minimum volatility portfolio.
+
+        Supports the same opt-in ``current_weights`` / ``transaction_cost``
+        turnover penalty as :meth:`optimize_sharpe` (default off = unchanged).
+        """
+        cw, tc = self._pop_txn_kwargs(cons)
         bounds, extra = self._build_bounds_constraints(**cons)
         weights = self._solve(
-            self.portfolio_volatility,
+            self._wrap_turnover(self.portfolio_volatility, cw, tc),
             bounds=bounds,
             extra_constraints=extra,
             label="Min-volatility optimization",
@@ -633,10 +701,15 @@ class PortfolioOptimizer:
         return result
 
     def optimize_sortino(self, mar_annual: float | None = None, **cons) -> PortfolioResult:
-        """Find the portfolio that maximizes the Sortino ratio."""
+        """Find the portfolio that maximizes the Sortino ratio.
+
+        Supports the same opt-in ``current_weights`` / ``transaction_cost``
+        turnover penalty as :meth:`optimize_sharpe` (default off = unchanged).
+        """
+        cw, tc = self._pop_txn_kwargs(cons)
         bounds, extra = self._build_bounds_constraints(**cons)
         weights = self._solve(
-            lambda w: -self.portfolio_sortino(w, mar_annual),
+            self._wrap_turnover(lambda w: -self.portfolio_sortino(w, mar_annual), cw, tc),
             bounds=bounds,
             extra_constraints=extra,
             label="Sortino optimization",
@@ -697,14 +770,135 @@ class PortfolioOptimizer:
             raise ValueError(f"Min-CVaR LP failed: {res.message}")
         return res.x[:n]
 
+    def portfolio_cdar(self, weights: np.ndarray, confidence: float = 0.95) -> float:
+        """Historical CDaR (Conditional Drawdown-at-Risk) on the UNCOMPOUNDED path.
+
+        Builds the drawdown series of the *arithmetic* cumulative-return path
+        ``y_t = sum_{s<=t} R_s @ w`` (a ``cumsum``, NOT ``cumprod``): the running
+        peak minus the current cumulative return, ``dd_t = max_{s<=t} y_s - y_t``.
+        CDaR at level ``confidence`` is the average of the drawdowns at or beyond
+        the ``confidence`` quantile (the worst ``1 - confidence`` tail).
+
+        NOTE -- domain accuracy: this is the *arithmetic* (uncompounded) drawdown
+        used by the Chekhlov-Uryasev-Zabarankin LP so the objective stays linear.
+        It is **related but NOT equal** to the geometric (``cumprod``) max drawdown
+        in ``metrics.py`` that the backtester reports; do not treat the two as the
+        same number.
+        """
+        port_daily = self.returns.values @ weights  # type: ignore[union-attr]  # returns is set before call
+        cum = np.cumsum(port_daily)
+        running_peak = np.maximum.accumulate(cum)
+        drawdowns = running_peak - cum  # >= 0
+        var = np.quantile(drawdowns, confidence)
+        tail = drawdowns[drawdowns >= var]
+        return float(tail.mean()) if tail.size else float(var)
+
+    def optimize_min_cdar(self, confidence: float = 0.95, **cons) -> PortfolioResult:
+        """Minimize Conditional Drawdown-at-Risk via a linear program.
+
+        CDaR (Chekhlov-Uryasev-Zabarankin, 2005) is the average of the worst
+        ``1 - confidence`` fraction of drawdowns of the cumulative-return path.
+        Mirroring :meth:`optimize_min_cvar`, the empirical CDaR is reformulated as
+        an exact convex LP (the Rockafellar-Uryasev family applied to drawdowns)
+        and solved with scipy ``linprog`` (HiGHS); it is zero-arg-callable via the
+        injected returns and returns the same :class:`PortfolioResult`.
+
+        Uses the UNCOMPOUNDED cumulative path (``cumsum`` of returns) so the
+        drawdown auxiliaries stay linear -- see :meth:`portfolio_cdar` for the
+        caveat that this differs from the geometric drawdown in ``metrics.py``.
+        Inherits the same constraint kwargs (``min_weights``, ``max_weights``,
+        ``allow_short``, ``groups``) as the CVaR LP.
+        """
+        if self.mean_returns is None:
+            raise ValueError("Call calculate_returns() first")
+        weights = self._min_cdar_lp(confidence, **cons)
+        return self._make_result(weights, "min_cdar")
+
+    def _min_cdar_lp(
+        self, confidence, min_weights=None, max_weights=None, allow_short: bool = False, groups=None
+    ) -> np.ndarray:
+        """Solve the min-CDaR LP. Decision vector z = [w(n), alpha(1), s(T), u(T)].
+
+        ``u_t`` tracks the running peak of the cumulative-return path
+        ``y_t = cumR_t @ w`` (where ``cumR`` is the cumulative-sum returns matrix),
+        the drawdown is ``dd_t = u_t - y_t >= 0``, and ``s_t >= dd_t - alpha`` are
+        the R-U tail-excess variables. The objective is
+        ``alpha + 1/((1-conf) T) * sum(s)``.
+        """
+        R = self.returns.values  # type: ignore[union-attr]  # returns is set before call  # (T, n)
+        cum_R = np.cumsum(R, axis=0)  # (T, n): row t is the cumulative-return loadings
+        T, n = R.shape
+        coef = 1.0 / ((1.0 - confidence) * T)
+
+        # objective: alpha + coef * sum(s); zeros on w and u.
+        c = np.concatenate([np.zeros(n), [1.0], np.full(T, coef), np.zeros(T)])
+
+        rows: list[np.ndarray] = []
+        b: list[np.ndarray] = []
+
+        # (1) s_t >= dd_t - alpha  ->  (u_t - y_t) - alpha - s_t <= 0
+        #     => u_t - cumR_t@w - alpha - s_t <= 0
+        block_u = np.eye(T)
+        a1 = np.hstack([-cum_R, -np.ones((T, 1)), -np.eye(T), block_u])
+        rows.append(a1)
+        b.append(np.zeros(T))
+
+        # (2) u_t >= y_t  ->  cumR_t@w - u_t <= 0
+        a2 = np.hstack([cum_R, np.zeros((T, 1)), np.zeros((T, T)), -block_u])
+        rows.append(a2)
+        b.append(np.zeros(T))
+
+        # (3) monotone peak: u_{t-1} - u_t <= 0 for t = 1..T-1
+        if T > 1:
+            mono = np.zeros((T - 1, T))
+            for t in range(T - 1):
+                mono[t, t] = 1.0
+                mono[t, t + 1] = -1.0
+            a3 = np.hstack([np.zeros((T - 1, n + 1 + T)), mono])
+            rows.append(a3)
+            b.append(np.zeros(T - 1))
+
+        for mask, gmin, gmax in self._group_masks(groups):
+            row = np.concatenate([mask, [0.0], np.zeros(T), np.zeros(T)])
+            rows.append(-row[None, :])
+            b.append(np.array([-gmin]))  # mask@w >= gmin
+            rows.append(row[None, :])
+            b.append(np.array([gmax]))  # mask@w <= gmax
+
+        A_ub = np.vstack(rows)
+        b_ub = np.concatenate(b)
+
+        # budget: sum(w) = 1
+        A_eq = np.concatenate([np.ones(n), [0.0], np.zeros(T), np.zeros(T)])[None, :]
+        b_eq = np.array([1.0])
+
+        lo = self._normalize_bound(min_weights, -1.0 if allow_short else 0.0)
+        hi = self._normalize_bound(max_weights, 1.0)
+        bounds = (
+            [(lo[i], hi[i]) for i in range(n)]  # w
+            + [(None, None)]  # alpha free
+            + [(0.0, None)] * T  # s >= 0
+            + [(None, None)] * T  # u free (peak of an unsigned cumulative path)
+        )
+
+        res = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+        if not res.success:
+            raise ValueError(f"Min-CDaR LP failed: {res.message}")
+        return res.x[:n]
+
     def optimize_max_return_target_vol(self, target_vol: float, **cons) -> PortfolioResult:
-        """Maximize expected return subject to volatility <= target_vol."""
+        """Maximize expected return subject to volatility <= target_vol.
+
+        Supports the same opt-in ``current_weights`` / ``transaction_cost``
+        turnover penalty as :meth:`optimize_sharpe` (default off = unchanged).
+        """
+        cw, tc = self._pop_txn_kwargs(cons)
         bounds, extra = self._build_bounds_constraints(**cons)
         extra = list(extra) + [
             {"type": "ineq", "fun": lambda w: target_vol - self.portfolio_volatility(w)}
         ]
         weights = self._solve(
-            lambda w: -self.portfolio_return(w),
+            self._wrap_turnover(lambda w: -self.portfolio_return(w), cw, tc),
             bounds=bounds,
             extra_constraints=extra,
             label="Max-return @ target-vol",
@@ -712,7 +906,12 @@ class PortfolioOptimizer:
         return self._make_result(weights, "max_return_target_vol")
 
     def optimize_min_vol_target_return(self, target_return: float, **cons) -> PortfolioResult:
-        """Minimize volatility subject to expected return >= target_return."""
+        """Minimize volatility subject to expected return >= target_return.
+
+        Supports the same opt-in ``current_weights`` / ``transaction_cost``
+        turnover penalty as :meth:`optimize_sharpe` (default off = unchanged).
+        """
+        cw, tc = self._pop_txn_kwargs(cons)
         if not cons.get("allow_short"):
             max_achievable = float(np.asarray(self.mean_returns).max())
             if target_return > max_achievable + 1e-9:
@@ -725,7 +924,7 @@ class PortfolioOptimizer:
             {"type": "ineq", "fun": lambda w: self.portfolio_return(w) - target_return}
         ]
         weights = self._solve(
-            self.portfolio_volatility,
+            self._wrap_turnover(self.portfolio_volatility, cw, tc),
             bounds=bounds,
             extra_constraints=extra,
             label="Min-vol @ target-return",

@@ -75,8 +75,9 @@ def test_parse_returns_csv_rejects_too_few_columns():
 def test_all_objectives_table_offline():
     rets = app.returns_from_prices(app.sample_prices())
     table = app.all_objectives_table(rets, 0.02)
-    # All six zero-arg objectives compared; target-based ones excluded.
-    assert table.shape[0] == 6
+    # All zero-arg objectives compared; target-based ones excluded.
+    expected = sum(1 for o in app.OBJECTIVES.values() if o.target is None)
+    assert table.shape[0] == expected
     assert {"Return", "Volatility", "Sharpe", "CVaR", "Max drawdown"} <= set(table.columns)
 
 

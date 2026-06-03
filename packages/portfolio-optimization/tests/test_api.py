@@ -66,6 +66,89 @@ def test_optimize_hrp_returns_valid_weights():
     assert body["volatility"] > 0
 
 
+def test_objectives_lists_min_cdar():
+    body = client.get("/objectives").json()
+    assert "min_cdar" in body["objectives"]
+
+
+def test_optimize_min_cdar_returns_valid_weights():
+    resp = client.post(
+        "/optimize",
+        json={"tickers": TICKERS, "returns": _returns_matrix(), "objective": "min_cdar"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["objective"] == "min_cdar"
+    weights = body["weights"]
+    assert set(weights) == set(TICKERS)
+    assert sum(weights.values()) == pytest.approx(1.0, abs=1e-6)
+    assert all(w >= -1e-9 for w in weights.values())  # long-only
+    assert body["volatility"] > 0
+
+
+# --- transaction-cost optional fields ---
+
+
+def test_optimize_absent_txn_fields_unchanged():
+    """Omitting current_weights/transaction_cost == the plain optimum."""
+    matrix = _returns_matrix()
+    base = client.post(
+        "/optimize",
+        json={"tickers": TICKERS, "returns": matrix, "objective": "sharpe"},
+    ).json()
+    zero = client.post(
+        "/optimize",
+        json={
+            "tickers": TICKERS,
+            "returns": matrix,
+            "objective": "sharpe",
+            "current_weights": {t: 0.25 for t in TICKERS},
+            "transaction_cost": 0.0,
+        },
+    ).json()
+    for t in TICKERS:
+        assert zero["weights"][t] == pytest.approx(base["weights"][t], abs=1e-6)
+
+
+def test_optimize_txn_cost_accepted_and_reduces_turnover():
+    matrix = _returns_matrix()
+    prior = {t: 0.25 for t in TICKERS}
+    base = client.post(
+        "/optimize",
+        json={"tickers": TICKERS, "returns": matrix, "objective": "sharpe"},
+    ).json()
+    priced = client.post(
+        "/optimize",
+        json={
+            "tickers": TICKERS,
+            "returns": matrix,
+            "objective": "sharpe",
+            "current_weights": prior,
+            "transaction_cost": 5.0,
+        },
+    )
+    assert priced.status_code == 200
+    pw = priced.json()["weights"]
+    base_turnover = sum(abs(base["weights"][t] - 0.25) for t in TICKERS)
+    priced_turnover = sum(abs(pw[t] - 0.25) for t in TICKERS)
+    assert priced_turnover < base_turnover
+    assert sum(pw.values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_optimize_unknown_current_weights_ticker_422():
+    resp = client.post(
+        "/optimize",
+        json={
+            "tickers": TICKERS,
+            "returns": _returns_matrix(),
+            "objective": "sharpe",
+            "current_weights": {"TSLA": 1.0},
+            "transaction_cost": 1.0,
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_optimize_unknown_objective_422():
     resp = client.post(
         "/optimize",

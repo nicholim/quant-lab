@@ -17,6 +17,7 @@ OBJECTIVE_CHOICES = (
     "risk_parity",
     "sortino",
     "min_cvar",
+    "min_cdar",
     "hrp",
     "both",
     "all",

@@ -71,6 +71,7 @@ OBJECTIVES: dict[str, Objective] = {
     "risk_parity": Objective("Risk parity", "optimize_risk_parity"),
     "sortino": Objective("Maximize Sortino ratio", "optimize_sortino"),
     "min_cvar": Objective("Minimize CVaR (tail risk)", "optimize_min_cvar"),
+    "min_cdar": Objective("Minimize CDaR (drawdown tail risk)", "optimize_min_cdar"),
     "hrp": Objective("Hierarchical Risk Parity", "optimize_hrp"),
     "max_return_target_vol": Objective(
         "Max return @ target volatility", "optimize_max_return_target_vol", target="vol"
@@ -80,7 +81,7 @@ OBJECTIVES: dict[str, Objective] = {
     ),
 }
 
-#: The six zero-arg objectives must use the exact methods ``run_analysis`` calls
+#: The zero-arg objectives must use the exact methods ``run_analysis`` calls
 #: (the ``analysis._OBJECTIVE_METHODS`` registry), so the UI's "All objectives"
 #: view stays a faithful mirror of ``run_analysis(objective="all")``. Keys differ
 #: (UI uses ``sharpe``/``min_vol``; analysis uses ``max_sharpe``/``min_vol``) but

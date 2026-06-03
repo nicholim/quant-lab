@@ -83,6 +83,7 @@ class TestSelectedObjectives:
             ("risk_parity", ["risk_parity"]),
             ("sortino", ["sortino"]),
             ("min_cvar", ["min_cvar"]),
+            ("min_cdar", ["min_cdar"]),
             ("hrp", ["hrp"]),
         ],
     )
@@ -92,6 +93,10 @@ class TestSelectedObjectives:
     def test_all_includes_hrp(self):
         assert "hrp" in _selected_objectives("all")
         assert analysis._OBJECTIVE_METHODS["hrp"] == "optimize_hrp"
+
+    def test_all_includes_min_cdar(self):
+        assert "min_cdar" in _selected_objectives("all")
+        assert analysis._OBJECTIVE_METHODS["min_cdar"] == "optimize_min_cdar"
 
 
 # --- compute_portfolio_returns ---
@@ -219,6 +224,52 @@ class TestRunAnalysis:
         out = run_analysis(cfg)
         assert "hrp" in out["results"]
         assert out["results"]["hrp"].weights.sum() == pytest.approx(1.0)
+
+    def test_run_min_cdar_objective_end_to_end(self, patched_downloads):
+        """--objective min_cdar routes through run_analysis and yields valid weights."""
+        cfg = AnalysisConfig(
+            tickers=patched_downloads,
+            objective="min_cdar",
+            num_portfolios=20,
+            monte_carlo_sims=50,
+            monte_carlo_days=20,
+            random_state=7,
+        )
+        out = run_analysis(cfg)
+        assert set(out["results"]) == {"min_cdar"}
+        res = out["results"]["min_cdar"]
+        assert res.weights.shape == (len(patched_downloads),)
+        assert res.weights.sum() == pytest.approx(1.0)
+        assert (res.weights >= -1e-6).all()
+        assert res.objective == "min_cdar"
+        assert set(out["metrics"]) == {"min_cdar"}
+        assert out["primary"] == "min_cdar"
+
+    def test_run_all_includes_min_cdar_result(self, patched_downloads):
+        cfg = AnalysisConfig(
+            tickers=patched_downloads,
+            objective="all",
+            num_portfolios=20,
+            monte_carlo_sims=50,
+            monte_carlo_days=20,
+            random_state=7,
+        )
+        out = run_analysis(cfg)
+        assert "min_cdar" in out["results"]
+        assert out["results"]["min_cdar"].weights.sum() == pytest.approx(1.0)
+
+    def test_print_report_handles_min_cdar(self, patched_downloads, capsys):
+        cfg = AnalysisConfig(
+            tickers=patched_downloads,
+            objective="min_cdar",
+            num_portfolios=20,
+            monte_carlo_sims=50,
+            monte_carlo_days=20,
+            random_state=7,
+        )
+        print_report(run_analysis(cfg), cfg)
+        captured = capsys.readouterr().out
+        assert "MIN CDAR" in captured
 
     def test_print_report_handles_hrp(self, patched_downloads, capsys):
         cfg = AnalysisConfig(

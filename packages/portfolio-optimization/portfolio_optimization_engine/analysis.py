@@ -25,6 +25,7 @@ _OBJECTIVE_METHODS = {
     "risk_parity": "optimize_risk_parity",
     "sortino": "optimize_sortino",
     "min_cvar": "optimize_min_cvar",
+    "min_cdar": "optimize_min_cdar",
     "hrp": "optimize_hrp",
 }
 
@@ -40,6 +41,7 @@ def _selected_objectives(objective: str) -> list[str]:
         "risk_parity": ["risk_parity"],
         "sortino": ["sortino"],
         "min_cvar": ["min_cvar"],
+        "min_cdar": ["min_cdar"],
         "hrp": ["hrp"],
     }[objective]
 
