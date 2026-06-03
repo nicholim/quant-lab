@@ -19,30 +19,26 @@ the standing rules. Keep it accurate — agents trust it instead of re-discoveri
 > wire REAL live market data (free sources) into the apps and harden them for cloud deploy.
 > All work goes on the `feature/agent-improvements` branch (off `main`); never push.
 
-**Done (2026-06-02): the ENTIRE P0/P1/P2 backlog is complete + features are wired end-to-end.** Beyond the
-foundational hygiene/tests/docs/deploy (P0/P1) and the live-data resilience layer (resilient yfinance +
-offline fixtures + Finnhub spot w/ 401 warning across the data packages), this session finished ALL P2
-feature-comprehensiveness picks across all 5 packages and made them reachable from CLI/API/UI/sim:
-- **options-pricing** (201 tests): higher-order Greeks (vanna/volga/charm), Black-76, vectorized batch
-  price/greeks/IV, true solved IV surface.
-- **portfolio-optimization** (251 tests): solved efficient frontier, Ledoit-Wolf shrinkage, HRP,
-  Black-Litterman — all exposed in the CLI + FastAPI (`/optimize/black-litterman` + example).
-- **backtesting** (191 tests): CSV/DataFrame handlers, 7 wired optimizer objectives, native short selling
-  (opt-in, long-only parity proven); CLI `--allow-short/--data-csv/--offline/--objective hrp`.
-- **market-data** (173 tests): pluggable StorageBackend (Timescale + **DuckDB**, the deploy default),
-  `replay()`, OHLCV final-bar fix, backpressure cap, pluggable ExchangeAdapter (**Binance + Coinbase**).
-- **cpp/order-book** (53 C++ + 41 py): IOC/FOK/post-only, **pybind11 bindings**, throughput/latency
-  benchmark, and `simulator.py` now drives the REAL C++ engine through the binding.
-Total **910 tests** green; ruff/format/mypy clean; cross-package contract intact. `render.yaml` deploys
-market-data on Redis+disk alone (DuckDB default, no external Timescale). Branches cleaned to just
-`feature/agent-improvements` + `main`. **NOTHING PUSHED** — 43 commits await the user's push.
+**Done (2026-06-02): ENTIRE P0/P1/P2 backlog + features wired end-to-end** (hygiene/tests/docs/deploy +
+live-data resilience + all P2 feature-comprehensiveness picks across all 5 packages, reachable from
+CLI/API/UI/sim). **Done (2026-06-03): the team-usability pass** — the monorepo is now clone-and-run and
+every app is a polished product:
+- **One-command DX:** root `Makefile` (`make help`/`setup`/`test`/`lint`/`run-*`), `docker-compose.yml`
+  (no external DB), `.devcontainer/`. `make setup` → one shared `.venv` (portfolio installed first).
+- **UI/UX:** options Streamlit + backtesting Dash apps polished (themes, KPI/metric cards, loading + in-UI
+  error states); **NEW** Streamlit front-ends for portfolio-optimization (`streamlit_app.py`, `run-optimizer-ui`)
+  and market-data (`monitor.py`, `run-market-monitor`) — both offline-safe.
+- **Docs/arch:** root `ARCHITECTURE.md` (7 Mermaid diagrams), `docs/getting-started.md`, all READMEs refreshed.
+Tests after both passes: options **209** / backtesting **205** / portfolio **259** / market-data **222** +
+order-book **53 C++ + 41 py** — all green, gates met; ruff/format/mypy clean; cross-package contract intact.
+`render.yaml` deploys market-data on Redis+disk alone (DuckDB default). Branches: just
+`feature/agent-improvements` + `main`. **NOTHING PUSHED** — the 2026-06-03 work was **squashed into one commit**;
+the branch still awaits the user's push.
 
-**Do next — optional polish only (no formal backlog items remain):**
-1. Dashboard reachability: a Dash `--allow-short` checkbox + `hrp` objective dropdown (needs the shared
-   `OBJECTIVE_TO_KEY`/`run_analysis` path extended); surface the vectorized IV surface in the Streamlit app.
-2. More market-data exchange adapters (Kraken/Bitstamp are ~1 class each); a `--exchange` CLI flag.
-3. A native C++ micro-benchmark to isolate the matching path from pybind11 overhead.
-4. `.env`/python-dotenv parity for the non-options packages.
+**Do next — P3: competitive features (user-requested for this round; see the P3 backlog in `IMPROVEMENTS.md`).**
+Run a fresh `feature-architect` gap analysis per package first, then implement the confirmed high-value picks
+(e.g. options Monte-Carlo + SVI/SABR; portfolio cvxpy backend / CVaR; market-data L2 order-book stream;
+backtesting long/short demo + slippage models; order-book ABIDES-lite / WASM). All additive + contract-safe.
 First action for the user: **push the branch**, then connect Render Blueprint + Netlify.
 
 ---

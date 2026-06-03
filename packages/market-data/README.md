@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-173%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~98%25-brightgreen.svg)](pyproject.toml)
 
 > An asyncio daemon that streams exchange trades over WebSocket (Binance, Coinbase, Kraken, or
@@ -123,7 +123,32 @@ cp .env.example .env
 
 # Run the pipeline
 python main.py --symbols btcusdt,ethusdt --log-level INFO
+# or from the monorepo root:  make run-market-data
 ```
+
+## Web UI — Streamlit monitor
+
+The daemon (`main.py`) is headless. `monitor.py` is a **read-only** Streamlit
+companion that makes the captured data visible — the most recent trades, the
+rolled-up 1-minute OHLCV bars, and a price/volume chart for a chosen symbol.
+
+```bash
+streamlit run monitor.py
+# or from the monorepo root:  make run-market-monitor
+```
+
+- **Reader, never an ingester.** It builds the **same** `StorageBackend` the
+  daemon uses (via `build_storage`) and pulls history through `Pipeline.replay()`.
+  It opens no WebSocket and changes no pipeline / adapter code.
+- **Offline / empty-store safe.** On a fresh clone the DuckDB file is usually
+  missing or empty, so the monitor synthesizes a deterministic seeded sample and
+  shows a clear banner that it is sample data — the UI always renders something.
+  Run the daemon first (`make run-market-data`) to populate real data, then
+  refresh.
+- **No new heavy dependency** — a manual "Refresh" button (a Streamlit rerun)
+  drives updates; `plotly` draws the chart. The `.streamlit/config.toml` theme is
+  committed. Like `main.py`, this file lives at the package root (outside the
+  `src` coverage scope), so it is AppTest-smoke-tested without diluting the gate.
 
 ## Configuration
 
@@ -393,7 +418,7 @@ retry budget (see `websocket_client.py`), so transient stream drops do not kill 
 pip install -r requirements.txt
 ruff check .      # lint
 mypy              # type-check (gradual)
-pytest            # 173 tests, ~98% coverage; gate --cov-fail-under=85
+pytest            # 222 tests, ~98% coverage; gate --cov-fail-under=85
 ```
 
 The test suite uses in-memory fakes (`FakeWebSocket` / `FakeRedis` / `FakePool` in

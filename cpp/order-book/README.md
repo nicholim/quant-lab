@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![clang-format](https://img.shields.io/badge/code%20style-clang--format-1f425f.svg)](.clang-format)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-53%20C%2B%2B%20%7C%2027%20Python-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-53%20C%2B%2B%20%7C%2041%20Python-brightgreen.svg)](tests/)
 
 A real **price-time-priority limit order book matching engine** in C++17, with a Python layer for
 order-flow simulation and depth-of-book visualization.
@@ -211,7 +211,7 @@ compiled extension; build it in step 1 first.)
 cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 
-# Python tests (27 tests; drives the compiled pybind11 engine in-process +
+# Python tests (41 tests; drives the compiled pybind11 engine in-process +
 # covers the viz/sim modules). Build the extension first (step 1 above).
 pytest          # from the repo root; runs with coverage (--cov-fail-under=80)
 ```

@@ -1,0 +1,15 @@
+# Professional finance palette: deep slate base, ink-blue primary, restrained.
+# Deliberately avoids generic AI purple gradients.
+[theme]
+base = "light"
+primaryColor = "#1f4e79"          # ink blue (accents, buttons, slider)
+backgroundColor = "#f7f8fa"       # soft off-white canvas
+secondaryBackgroundColor = "#eceff3"  # panel / sidebar / metric cards
+textColor = "#1c2733"             # near-black slate
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

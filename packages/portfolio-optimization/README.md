@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-234%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-259%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~96%25-brightgreen.svg)](pyproject.toml)
 
 A focused, dependency-light Modern Portfolio Theory optimizer: a true solved efficient frontier,
@@ -192,11 +192,15 @@ keyed by tickers/dates, overridable via `POE_CACHE_DIR`):
 - A **graceful offline fallback**: pass `--offline` (CLI), `offline=True` (library), or set
   `PORTFOLIO_OFFLINE=1` to serve a small bundled price fixture
   (`portfolio_optimization_engine/data/sample_prices.csv`, tickers
-  `AAPL/MSFT/GOOGL/AMZN/SPY`) instead of hitting the network — so demos never hard-fail on
-  restricted cloud egress. Offline results are not written to the on-disk cache.
+  `AAPL/MSFT/GOOGL/AMZN/JPM/GS/SPY`) instead of hitting the network — so demos never hard-fail on
+  restricted cloud egress. The fixture covers the CLI's **default** ticker universe, so
+  `python main.py --offline` runs end-to-end with no `--tickers` needed. Offline results are not
+  written to the on-disk cache.
 
 ```bash
-# Fully offline demo (no network), beta/alpha vs the bundled SPY fixture
+# Fully offline demo (no network) — default universe, no --tickers needed
+python main.py --offline --no-plots
+# Or pick a subset + a benchmark from the fixture (beta/alpha vs SPY)
 python main.py --tickers AAPL MSFT GOOGL --benchmark SPY --offline --no-plots
 ```
 
@@ -321,7 +325,8 @@ portfolio-optimization-engine/
 ├── api/app.py              # Thin FastAPI demo wrapper (calls the public API; no logic duplicated)
 ├── render.yaml             # Render Blueprint for the FastAPI demo
 ├── examples/               # Runnable workflows (quickstart_offline.py, black_litterman_demo.py — no network)
-├── tests/                  # pytest suite (234 tests, ~96% coverage)
+├── streamlit_app.py        # Streamlit demo UI (input sources, 8 objectives, frontier, Black-Litterman form)
+├── tests/                  # pytest suite (259 tests, ~96% coverage)
 └── portfolio_optimization_engine/   # importable package
     ├── optimizer.py         # PortfolioOptimizer (frontier, all objectives, flexible constraints)
     ├── covariance.py        # Ledoit-Wolf shrinkage estimators (opt-in, numpy-only)
@@ -334,6 +339,37 @@ portfolio-optimization-engine/
     ├── export.py            # CSV / JSON result export
     └── visualization.py     # Plotting (frontier, correlation, weights, returns, drawdown)
 ```
+
+## Web UI (Streamlit)
+
+`streamlit_app.py` is an interactive demo surface that makes the optimizer usable
+without the CLI. It is a *demo only* — it never reimplements the optimization
+math; every result flows through the existing public API (the same
+injected-returns contract the backtester and FastAPI demo use), so the
+cross-package contract stays intact.
+
+```bash
+streamlit run streamlit_app.py
+# or from the monorepo root:  make run-optimizer-ui
+```
+
+What it shows:
+
+- **Input source** — bundled offline sample, uploaded/entered returns, or a live
+  yfinance fetch.
+- **8 objectives** — max Sharpe, min volatility, risk parity, HRP, max Sortino,
+  min CVaR, and the two target-based solves, plus an "All objectives" comparison.
+- **Efficient frontier** — the true *solved* frontier
+  (`solved_efficient_frontier`), not just the random-portfolio cloud.
+- **Black-Litterman mini-form** — enter views (pick matrix `P` + target returns
+  `Q`) and see prior → posterior → optimized weights.
+
+**Offline behavior:** it works fully offline using the bundled price fixture
+(`portfolio_optimization_engine/data/sample_prices.csv`) and degrades gracefully
+(never a raw traceback) when a live fetch fails. The `.streamlit/config.toml`
+theme is committed. This file lives outside the `src` coverage scope (like
+`api/` and `main.py`), so it is AppTest-exercised without diluting the package
+coverage gate.
 
 ## Deploy (Render) — optional FastAPI demo
 
@@ -378,7 +414,7 @@ Deploy on Render (Blueprint — `render.yaml` is committed):
 
 ```bash
 pip install -e ".[test]"
-pytest                       # 234 tests, branch coverage gated at 90% (~96% actual)
+pytest                       # 259 tests, branch coverage gated at 90% (~96% actual)
 ruff check . && ruff format --check .
 ```
 

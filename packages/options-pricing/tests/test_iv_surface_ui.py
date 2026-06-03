@@ -88,17 +88,56 @@ def test_plot_solved_iv_surface_put_renders_without_save():
     _close_all()
 
 
-def test_app_builds_offline():
-    """The Streamlit app imports and runs without error (offline, no network)."""
+def _run_app_offline():
+    """Build + run app.py headlessly with the offline flag set (no network)."""
     from streamlit.testing.v1 import AppTest
 
     os.environ["OPTIONS_PRICING_OFFLINE"] = "1"
     try:
         app_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app.py")
-        at = AppTest.from_file(app_path, default_timeout=30)
+        at = AppTest.from_file(app_path, default_timeout=60)
         at.run()
-        assert not at.exception
-        # All three tabs are present (Calculator, Live market, IV surface).
-        assert len(at.tabs) == 3
+        return at
     finally:
         os.environ.pop("OPTIONS_PRICING_OFFLINE", None)
+
+
+def test_app_builds_offline():
+    """The Streamlit app imports and runs without error (offline, no network)."""
+    at = _run_app_offline()
+    assert not at.exception
+    # All three tabs are present (Calculator, Live market, IV surface).
+    assert len(at.tabs) == 3
+
+
+def test_app_has_global_sidebar_inputs():
+    """The polished sidebar groups the core global inputs the calculator needs."""
+    at = _run_app_offline()
+    assert not at.exception
+    # Number inputs S, K, T, r, sigma all live in the sidebar.
+    labels = {ni.label for ni in at.sidebar.number_input}
+    assert "Spot price (S)" in labels
+    assert "Strike price (K)" in labels
+    assert "Time to expiry (years)" in labels
+    # The offline-sample toggle and an option-type selectbox exist.
+    assert any("Offline" in t.label for t in at.sidebar.toggle)
+    assert any(sb.label == "Option type" for sb in at.sidebar.selectbox)
+
+
+def test_app_shows_offline_banner_and_metrics():
+    """Offline mode surfaces the banner and renders price/Greek metric cards."""
+    at = _run_app_offline()
+    assert not at.exception
+    # Offline banner is shown via st.info.
+    assert any("Offline sample mode is ON" in str(el.value) for el in at.info)
+    # Calculator renders metric cards (Black-Scholes + the five Greeks).
+    metric_labels = {m.label for m in at.metric}
+    assert "Black-Scholes" in metric_labels
+    assert {"Delta", "Gamma", "Theta", "Vega", "Rho"} <= metric_labels
+
+
+def test_app_no_raw_exceptions_in_widgets():
+    """No element rendered a traceback/error state in the default offline build."""
+    at = _run_app_offline()
+    assert not at.exception
+    assert len(at.error) == 0

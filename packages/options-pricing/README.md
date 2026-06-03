@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-201%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-209%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~99%25-brightgreen.svg)](pyproject.toml)
 
 A compact, readable options-pricing library: **Black-Scholes-Merton** closed-form pricing, a
@@ -15,7 +15,7 @@ A compact, readable options-pricing library: **Black-Scholes-Merton** closed-for
 
 Most "learn options pricing" code is either a one-file gist with no tests, or a heavyweight
 institutional library (QuantLib) whose surface area hides the math. This project sits in between:
-small enough to read end-to-end (~4 source files), correct enough to trust (201 tests cross-checked
+small enough to read end-to-end (~4 source files), correct enough to trust (209 tests cross-checked
 against textbook reference values and put-call parity, ~99% coverage), and packaged with a CLI and
 a web UI so you can actually *use* it. It can also pull a **real option chain** from free data and
 show you, per contract, where its own Black-Scholes price disagrees with the live market mid.
@@ -150,6 +150,7 @@ premium (`~$0.25`) — the binomial tree captures it, the closed-form Black-Scho
 
 ```bash
 streamlit run app.py
+# or from the monorepo root:  make run-options   (-> http://localhost:8501)
 ```
 
 Opens a dashboard at `http://localhost:8501` with three tabs:
@@ -293,7 +294,7 @@ for the broader ecosystem.
 
 ## Correctness checks
 
-Accuracy here is validated, not asserted. The test suite (201 tests, ~99% branch coverage) includes
+Accuracy here is validated, not asserted. The test suite (209 tests, ~99% branch coverage) includes
 real cross-checks any practitioner would recognize — these are *correctness* checks, not performance
 benchmarks:
 
@@ -314,7 +315,7 @@ benchmarks:
 Run them:
 
 ```bash
-pytest                       # all 201 tests + coverage gate (95%)
+pytest                       # all 209 tests + coverage gate (95%)
 pytest tests/test_accuracy.py -v
 ```
 

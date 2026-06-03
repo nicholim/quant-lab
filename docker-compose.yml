@@ -1,0 +1,82 @@
+# docker-compose.yml — runnable quant stack for people who don't want to
+# install Python locally. Created by the DX tooling pass.
+#
+#   docker compose up --build        # build + start the whole stack
+#   docker compose config -q         # validate this file
+#   docker compose down -v           # stop + remove volumes
+#
+# Published ports (host -> container):
+#   8501  options-pricing  Streamlit app   -> http://localhost:8501
+#   8050  backtesting      Dash dashboard  -> http://localhost:8050
+#   8000  portfolio-api    FastAPI demo    -> http://localhost:8000  (/docs, /health)
+#   6379  redis            cache (used by market-data)
+#   market-data is a background worker (no published port) writing to DuckDB.
+#
+# market-data uses STORAGE_BACKEND=duckdb so it needs NO external TimescaleDB —
+# only the bundled Redis. Tick/bar data persists to a named volume.
+
+services:
+  # ---- Redis cache (dependency of the market-data worker) ----
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---- Market-data ingestion daemon (background worker) ----
+  # Reuses the package's existing Dockerfile (packages/market-data/Dockerfile).
+  market-data:
+    build:
+      context: ./packages/market-data
+      dockerfile: Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
+      # No external DB: persist ticks/bars to a local DuckDB file.
+      STORAGE_BACKEND: duckdb
+      DUCKDB_PATH: /app/data/marketdata.duckdb
+      EXCHANGE: binance
+      WS_URL: wss://stream.binance.com:9443/ws
+      SYMBOLS: btcusdt,ethusdt,solusdt
+      LOG_LEVEL: INFO
+      BATCH_SIZE: "100"
+      FLUSH_INTERVAL_SECONDS: "5"
+      MAX_BUFFER_SIZE: "1000"
+    volumes:
+      - marketdata:/app/data
+
+  # ---- Options pricing Streamlit app ----
+  options-pricing:
+    build:
+      context: .
+      dockerfile: docker/options-pricing.Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      # Optional Finnhub spot quotes; falls back to yfinance / bundled sample.
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+
+  # ---- Backtesting Dash dashboard ----
+  backtesting:
+    build:
+      context: .
+      dockerfile: docker/backtesting.Dockerfile
+    ports:
+      - "8050:8050"
+
+  # ---- Portfolio optimization FastAPI demo ----
+  portfolio-api:
+    build:
+      context: .
+      dockerfile: docker/portfolio-api.Dockerfile
+    ports:
+      - "8000:8000"
+
+volumes:
+  marketdata:

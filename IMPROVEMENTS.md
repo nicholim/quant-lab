@@ -70,9 +70,93 @@ Per-repo prioritized "do these next" (analysis only — NOT yet implemented; awa
   2. [x] `optimize_hrp()` Hierarchical Risk Parity — DONE 2026-06-02 (solver-free, scipy `linkage`; ADDITIVE).
   3. [x] Ledoit-Wolf covariance shrinkage (opt-in, default off to preserve parity) — DONE 2026-06-02 (`calculate_returns(shrinkage=...)`). [x] Runner-up Black-Litterman (M) — DONE 2026-06-02 (`black_litterman.py` + `optimize_black_litterman`). Defer cvxpy backend (heavy dep, scope creep). All four portfolio P2 picks now DONE.
 
+### P3 — competitive features (NEXT ROUND — user-requested 2026-06-03, deferred from the team-usability pass)
+The user asked to do DX/UI/docs first (DONE 2026-06-03) and tackle *new competitive features* next. These are
+the next set of "what comparable OSS/products have that we lack" picks, distilled from the prior
+feature-architect gap analyses + the AGENTS.md domain caveats. **Run a fresh `feature-architect` gap analysis
+per package first to confirm/re-prioritize before implementing — don't trust this list blindly.** Candidate
+high-value picks (additive, contract-safe — verify each against the live API):
+- **options-pricing** (vs QuantLib): Monte-Carlo pricer (the one capability the showcase used to *falsely*
+  claim) + variance reduction; an SVI / SABR vol-surface fit on top of the existing solved IV surface;
+  American/exotic via PDE/finite-difference. (Heston is the QuantLib-scale stretch goal.)
+- **portfolio-optimization** (vs PyPortfolioOpt/riskfolio/skfolio/cvxpy): a `cvxpy` solver backend (general
+  convex constraints — sector caps, turnover, cardinality) as an opt-in alt to scipy SLSQP; CVaR/CDaR convex
+  objectives; transaction-cost-aware rebalancing. (Weigh the cvxpy dependency cost.)
+- **backtesting** (vs backtrader/zipline): a built-in long/short demo strategy that actually exercises the
+  `allow_short` path; a commission/slippage model library; a parameter-sweep / optimization grid runner;
+  multi-asset portfolio-level analytics in the dashboard.
+- **market-data** (vs cryptofeed/ccxt-pro): an **order-book/L2 depth** stream (not just trades) — the headline
+  gap vs cryptofeed; multi-symbol fan-out per connection; an expanding-batch adapter contract (Kraken/Bitstamp
+  batches → multiple Trades, flagged in prior passes).
+- **cpp/order-book** (vs ABIDES): the strategic "ABIDES-lite" path — a discrete-event latency clock +
+  agent-based participants; a **WASM** core for an in-browser showcase demo (medium-effort showcase win).
+- **cross-cutting:** wire the showcase "Live demo" buttons to the deployed Render URLs once the user deploys;
+  optional `mkdocs`/site build for the docs (deferred this round to avoid a new build dep — Mermaid-in-Markdown
+  was chosen instead).
+
 ---
 
 ## Changelog
+
+## 2026-06-03 — main thread (/improve-quant) — team-usability pass: one-command DX + UI/UX + architecture docs
+- **Theme:** make the monorepo *team-usable* — clone-and-run in one command, every app a polished product,
+  and a single "how it fits together" doc. Driven by the user's pick: runnability (DX) + UI/UX + docs/arch;
+  competitive features explicitly **deferred to next round** (see new P3 backlog). All on
+  `feature/agent-improvements` (NOT pushed). Delivered via 5 parallel specialist subagents (disjoint file
+  sets, no commits/README/ledger edits by subagents to avoid races) + 1 serial docs agent; the main thread
+  owned all commits, this ledger, and the final squash. **Subagents verified each suite; the main thread
+  re-ran all four Python suites independently before committing.**
+- **One-command DX (root):** `Makefile` (self-documenting `make help`; targets `setup`, `test`/`test-py`/
+  `test-cpp`, `lint`/`format`/`format-check`/`typecheck`, `build-orderbook`, run targets `run-options`:8501 /
+  `run-backtest`:8050 / `run-optimizer-api`:8000 / `run-optimizer-ui`:8502 / `run-market-data` (daemon) /
+  `run-market-monitor`:8503 / `run-showcase`, `docker-up`/`docker-down`, `clean`). `make setup` builds ONE
+  shared `.venv` installing **portfolio-optimization first** (respects the `-e ../portfolio-optimization`
+  editable cross-package contract). Root `docker-compose.yml` (redis + market-data worker on
+  `STORAGE_BACKEND=duckdb` + options + backtesting + portfolio-api; `docker compose config` validates clean;
+  per-service Dockerfiles under `docker/`, market-data reuses its existing Dockerfile). `.devcontainer/`
+  (Python 3.11 + C++ toolchain + Node, `postCreate: make setup`). `scripts/bootstrap.sh`.
+- **UI/UX (each app now feels like a product):**
+  - **options-pricing** Streamlit `app.py` polished — page config + cohesive finance theme
+    (`.streamlit/config.toml`), `st.metric` cards for price + Greeks with help tooltips, validation, spinners,
+    graceful empty/error states, offline banner. **209 tests** (gate 95% → 99.24%); +3 AppTest smokes.
+  - **backtesting** Dash `dashboard.py` polished — header/status bar, grouped control panel, 4 KPI metric cards
+    (return/Sharpe/Sortino/max-DD), shared Plotly `quantlab` template, `dcc.Loading`, in-UI `MarketDataError`
+    alert (no stack trace), new `assets/dashboard.css` (no new dep). **205 tests** (gate 80% → 89.20%); +8.
+  - **portfolio-optimization** — **NEW** Streamlit front-end `streamlit_app.py`: input source (bundled offline
+    sample / CSV upload / live tickers w/ fallback), 8 objectives, weights chart + metric cards, **solved
+    efficient frontier**, "all objectives" comparison, Black-Litterman prior→posterior mini-form. Reuses the
+    existing optimizer API only (contract intact). **259 tests** (gate 90% → 96.53%); +8 AppTest smokes;
+    `streamlit`+`plotly` pinned; app file kept outside the coverage source.
+  - **market-data** — **NEW** read-only Streamlit `monitor.py`: recent trades + 1-min OHLCV + price/volume
+    chart for a symbol, reading the same `StorageBackend` via `Pipeline.replay()` (no websocket). Deterministic
+    seeded sample on an empty/fresh store with a clear "sample data" banner so it always renders. **222 tests**
+    (gate 85% → 98.68%); +8; `streamlit`+`plotly` pinned; monitor outside the coverage source.
+- **Docs & architecture:** NEW root `ARCHITECTURE.md` (7 Mermaid diagrams — system context + the one
+  backtesting→portfolio editable dep, per-app data flows, deployment topology; responsibility/entry-point
+  table; design-decisions section). NEW `docs/getting-started.md` (clone→run in 5 min: make path with
+  URLs/ports, docker-compose path, devcontainer path, what each of the 4 UIs does). Root `README.md` "Run it
+  (one command)" section + Layout updated (all 4 packages now have UIs) + links to the new docs. All 5 package
+  READMEs: stale test badges bumped to REAL counts (options 201→**209**, backtesting 175→**205**, portfolio
+  234→**259**, market-data 173→**222**, order-book Python 27→**41**; C++ 53 unchanged) + a "Web UI" section
+  each. Honored the AGENTS.md domain caveats (no fabricated competitor capabilities).
+- **Verification (REAL, main thread):** options **209** / backtesting **207** / portfolio **260** /
+  market-data **222** Python suites all green with coverage gates met (99.24 / 89.20 / 96.53 / 98.68%);
+  order-book unchanged (53 C++ ctest + 41 py). `make help` renders; `docker compose config -q` clean.
+  ruff/format/mypy clean. **Total Python now ~898 + 41 = 939; +53 C++.**
+- **Hands-on runtime verification (no-pytest) + 2 offline fixes:** drove every entry point for real —
+  CLIs run, FastAPI endpoints + Dash run-callback driven over HTTP, C++ demo binary, showcase build/serve,
+  all servers boot (health 200). Found & FIXED two offline-path defects: (1) `portfolio main.py --offline`
+  crashed because the default universe included JPM/GS, absent from the fixture → added JPM + GS
+  (real tickers, SPY-correlated synthetic 2023 series) to `sample_prices.csv`; (2) the Dash dashboard's
+  optimizer half ignored `BACKTESTING_OFFLINE` → wired the flag through `AnalysisConfig.offline` +
+  `YFinanceDataHandler(offline=...)` so a single `BACKTESTING_OFFLINE=1` offlines the whole page and the
+  default tickers/dates run offline out of the box. Both locked with regression tests (backtesting 205→207,
+  portfolio 259→260). With network, all apps already worked; these only affected the no-egress demo path.
+- **Commits squashed** at the user's request into one conventional commit on `feature/agent-improvements`.
+- **User actions:** still **NOTHING PUSHED** — push `feature/agent-improvements` when ready, then connect
+  Render Blueprint + Netlify (unchanged from prior passes). New: `make setup && make test` is the fastest way
+  for a teammate to validate locally; `docker compose up` for a no-local-Python demo.
+- **Next pass = competitive features (P3 below).**
 
 ## 2026-06-02 — feature-architect — packages/market-data (Kraken + Bitstamp adapters, --exchange flag, dotenv parity)
 - Branch `feature/agent-improvements` (NOT pushed). Optional-polish pass: two more keyless-public exchange

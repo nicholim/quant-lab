@@ -132,6 +132,21 @@ def test_offline_unknown_ticker_raises():
         fetch_close_prices("NOPE", "2023-01-01", "2023-02-01", offline=True)
 
 
+def test_offline_fixture_covers_cli_default_universe():
+    """The bundled fixture must cover the CLI's default tickers (incl. JPM/GS) so
+    `python main.py --offline` works out of the box -- regression for the gap where
+    JPM/GS were missing and the documented offline command crashed."""
+    from portfolio_optimization_engine.config import AnalysisConfig
+
+    defaults = AnalysisConfig().tickers
+    sample = data_cache._load_sample_prices()
+    missing = [t for t in defaults if t not in sample.columns]
+    assert not missing, f"default tickers absent from offline fixture: {missing}"
+    out = fetch_close_prices(["JPM", "GS"], "2023-01-01", "2023-02-01", offline=True)
+    assert list(out.columns) == ["JPM", "GS"]
+    assert (out > 0).all().all()
+
+
 # --- download_close_prices interaction with offline + cache ----------------
 
 

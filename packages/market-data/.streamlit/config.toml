@@ -1,0 +1,15 @@
+# Professional trading-desk palette: deep ink-blue on a cool slate canvas.
+# Intentionally restrained (no AI purple gradients) to read as an ops console.
+[theme]
+base = "dark"
+primaryColor = "#3da9fc"              # signal blue (accents, buttons, slider)
+backgroundColor = "#0e1420"           # deep navy canvas
+secondaryBackgroundColor = "#172233"  # panel / sidebar / metric cards
+textColor = "#e6edf3"                 # off-white slate
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

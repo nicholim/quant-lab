@@ -1,0 +1,42 @@
+{
+  // Dev container for the quant monorepo — opens ready-to-run in VS Code /
+  // GitHub Codespaces. Created by the DX tooling pass.
+  // Python 3.11 base + C++ build tools (gcc/g++/cmake) + Node for the showcase.
+  // postCreate runs `make setup` to build the shared .venv and install all packages.
+  "name": "quant-monorepo",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "features": {
+    // C++ toolchain for the order-book (cmake, gcc/g++, ctest).
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    "ghcr.io/devcontainers-extra/features/apt-get-packages:1": {
+      "packages": "build-essential cmake clang-format"
+    },
+    // Node for `make run-showcase` (vite dev server).
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    }
+  },
+  "postCreateCommand": "make setup",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "ms-vscode.cpptools",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python"
+      }
+    }
+  },
+  // Forward the app ports so the running services are reachable from the host.
+  "forwardPorts": [8501, 8050, 8000, 6379],
+  "portsAttributes": {
+    "8501": { "label": "options-pricing (Streamlit)" },
+    "8050": { "label": "backtesting (Dash)" },
+    "8000": { "label": "portfolio-api (FastAPI)" },
+    "6379": { "label": "redis" }
+  },
+  "remoteUser": "vscode"
+}

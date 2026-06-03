@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-175%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-205%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~89%25-brightgreen.svg)](pyproject.toml)
 
 **A multi-asset, event-driven backtester that fills at the next bar's open, persists every run to DuckDB for SQL comparison, and runs walk-forward MPT-optimized portfolios out-of-sample.**
@@ -172,6 +172,11 @@ shape, so CSV runs are bar-identical to yfinance runs.
 
 ## Web dashboard (GUI)
 
+```bash
+python dashboard.py
+# or from the monorepo root:  make run-backtest   (-> http://localhost:8050)
+```
+
 `dashboard.py` is a unified [Plotly Dash](https://dash.plotly.com/) app spanning
 both repos: choose tickers / dates / objective in the sidebar, click **Run**, and
 it (1) optimizes the portfolio with the engine — efficient frontier, weights,
@@ -182,6 +187,13 @@ short selling** checkbox (default off = long-only) threads into
 `Portfolio(allow_short=True)` for the backtest run. Everything else (`main.py`,
 the Python API) remains available; the dashboard is just an interactive front
 end over `run_analysis`, `Backtest`, and the Plotly figures.
+
+The UI is polished: a control panel, KPI summary cards, themed styling
+(`assets/dashboard.css`), and explicit loading and error states. Because the data
+layer **raises** (`MarketDataError`) on a failed yfinance fetch rather than
+silently serving a fixture, the dashboard surfaces that as an in-UI error instead
+of crashing — set `BACKTESTING_OFFLINE=1` to force the deterministic bundled
+fixture (see [DEPLOY.md](DEPLOY.md)).
 
 > This framework depends on the [portfolio-optimization-engine](../portfolio-optimization-engine)
 > as a one-way dependency (backtester → engine). `requirements.txt` installs it in

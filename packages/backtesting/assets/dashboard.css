@@ -1,0 +1,280 @@
+/* Portfolio Lab — restrained quant/finance design system.
+   Dash auto-loads every assets/*.css. No external CSS framework: the
+   requirements pin plain `dash`, so we keep the dependency footprint flat
+   and own the palette/typography here instead of adding bootstrap. */
+
+:root {
+  --ink: #0f1b2d;          /* near-black navy for primary text */
+  --ink-soft: #5a6678;     /* secondary text */
+  --ink-faint: #8a94a6;    /* captions / hints */
+  --navy: #1f3b73;         /* brand / primary action */
+  --navy-deep: #16294f;
+  --panel: #ffffff;
+  --canvas: #f5f7fa;       /* app background */
+  --sidebar: #0f1b2d;      /* dark control rail */
+  --sidebar-soft: #1b2a44;
+  --line: #e3e8ef;         /* hairline borders */
+  --line-dark: #2a3a57;
+  --pos: #1b8a5a;          /* gains (green) */
+  --neg: #c0392b;          /* losses (red) */
+  --accent: #c79a3a;       /* muted gold accent */
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(15, 27, 45, 0.06), 0 4px 16px rgba(15, 27, 45, 0.06);
+  --mono: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- Header / title bar --- */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  background: var(--navy-deep);
+  color: #fff;
+  box-shadow: var(--shadow);
+}
+.app-header__brand { display: flex; align-items: baseline; gap: 12px; }
+.app-header__mark {
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  color: var(--accent);
+}
+.app-header__title { font-size: 18px; font-weight: 650; margin: 0; }
+.app-header__subtitle {
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.65);
+  margin: 0;
+}
+.app-header__status {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: rgba(255, 255, 255, 0.75);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--pos); display: inline-block;
+}
+.status-dot--offline { background: var(--accent); }
+
+/* --- Layout --- */
+.app-shell { display: flex; min-height: calc(100vh - 64px); }
+
+/* --- Sidebar / control panel --- */
+.sidebar {
+  width: 300px;
+  flex: 0 0 300px;
+  padding: 22px 20px;
+  background: var(--sidebar);
+  color: #e7ecf3;
+}
+.sidebar h3 { margin: 0 0 4px; font-size: 15px; letter-spacing: 0.02em; }
+.control-group {
+  border: 1px solid var(--line-dark);
+  border-radius: var(--radius);
+  padding: 14px 14px 6px;
+  margin-bottom: 16px;
+  background: var(--sidebar-soft);
+}
+.control-group__legend {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--accent);
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+.field { margin-bottom: 12px; }
+.field:last-child { margin-bottom: 4px; }
+.field label, .control-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c4cedd;
+  margin-bottom: 5px;
+}
+.field .hint {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-top: 4px;
+}
+.field input[type="text"],
+.field input[type="number"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-dark);
+  border-radius: 7px;
+  background: #0c1830;
+  color: #f0f4f9;
+  font-size: 13px;
+  font-family: var(--mono);
+}
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(199, 154, 58, 0.25);
+}
+
+/* Dropdown (react-select) restyle for the dark rail */
+.field .Select-control,
+.field .dash-dropdown .Select-control {
+  background: #0c1830;
+  border: 1px solid var(--line-dark);
+  border-radius: 7px;
+}
+
+.btn-run {
+  width: 100%;
+  padding: 11px;
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+.btn-run:hover { background: #2a4d92; }
+.btn-run:active { transform: translateY(1px); }
+
+.status-line {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #9fb0c8;
+  line-height: 1.4;
+}
+
+/* --- Main content --- */
+.content { flex: 1; padding: 24px 28px; min-width: 0; }
+
+/* --- Alerts / empty states --- */
+.alert {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  margin-bottom: 18px;
+  border: 1px solid transparent;
+}
+.alert--error {
+  background: #fdecea;
+  color: #8c241b;
+  border-color: #f3c0ba;
+}
+.alert--info {
+  background: #eef2f8;
+  color: var(--ink-soft);
+  border-color: var(--line);
+}
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--ink-faint);
+}
+.empty-state h4 { color: var(--ink-soft); margin: 0 0 6px; font-size: 16px; }
+
+/* --- Metric cards --- */
+.metric-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.metric-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+.metric-card__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-faint);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.metric-card__value {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+}
+.metric-card__value--pos { color: var(--pos); }
+.metric-card__value--neg { color: var(--neg); }
+
+/* --- Tables --- */
+.metric-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 13px;
+}
+.metric-table td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.metric-table tr:last-child td { border-bottom: none; }
+.metric-table td:first-child { color: var(--ink-soft); }
+.metric-table td:last-child {
+  text-align: right;
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+/* --- Cards / panels --- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+  margin-bottom: 18px;
+}
+.panel__title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.panel__caption {
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin: 0 0 12px;
+}
+
+/* --- Tabs --- */
+.dash-tab { font-weight: 600 !important; }
+
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  margin: 4px 0 14px;
+}

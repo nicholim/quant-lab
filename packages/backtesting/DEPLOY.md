@@ -85,9 +85,12 @@ on failure. The dashboard catches that and surfaces it as an in-UI error (it doe
 **not** 500), but a rate-limited deploy will show an error instead of results.
 
 The escape hatch is the **`BACKTESTING_OFFLINE`** env var (also the `--offline`
-flag on `main.py`). When set, every fetch returns the bundled deterministic
-fixture without touching the network — the env flag overrides the dashboard's
-`offline=False` argument at the data layer.
+flag on `main.py`). When set, **both** the dashboard's halves go offline with a
+**single flag** — the backtest (`YFinanceDataHandler`) and the optimizer frontier
+(`run_analysis`, whose `AnalysisConfig.offline` the dashboard now drives off the
+same flag) — so the whole page renders from bundled fixtures without touching the
+network. The dashboard's default tickers (`AAPL, MSFT, JPM, AMZN`) and date range
+are all covered by the bundled fixtures, so an offline **Run** works out of the box.
 
 **Tradeoff / recommendation (mirrors options-pricing):** we deliberately do **not**
 default `BACKTESTING_OFFLINE=1` on Render, so live data shows when egress allows.
