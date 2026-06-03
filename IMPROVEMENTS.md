@@ -76,15 +76,18 @@ the next set of "what comparable OSS/products have that we lack" picks, distille
 feature-architect gap analyses + the AGENTS.md domain caveats. **Run a fresh `feature-architect` gap analysis
 per package first to confirm/re-prioritize before implementing — don't trust this list blindly.** Candidate
 high-value picks (additive, contract-safe — verify each against the live API):
-- **options-pricing** (vs QuantLib): Monte-Carlo pricer (the one capability the showcase used to *falsely*
-  claim) + variance reduction; an SVI / SABR vol-surface fit on top of the existing solved IV surface;
-  American/exotic via PDE/finite-difference. (Heston is the QuantLib-scale stretch goal.)
-- **portfolio-optimization** (vs PyPortfolioOpt/riskfolio/skfolio/cvxpy): a `cvxpy` solver backend (general
-  convex constraints — sector caps, turnover, cardinality) as an opt-in alt to scipy SLSQP; CVaR/CDaR convex
-  objectives; transaction-cost-aware rebalancing. (Weigh the cvxpy dependency cost.)
-- **backtesting** (vs backtrader/zipline): a built-in long/short demo strategy that actually exercises the
-  `allow_short` path; a commission/slippage model library; a parameter-sweep / optimization grid runner;
-  multi-asset portfolio-level analytics in the dashboard.
+- **options-pricing** (vs QuantLib): [x] Monte-Carlo pricer + variance reduction — DONE 2026-06-03;
+  [x] SVI vol-surface fit on the existing solved IV surface — DONE 2026-06-03. Still open: SABR fit,
+  American/exotic via PDE/finite-difference, Heston (QuantLib-scale stretch goal).
+- **portfolio-optimization** (vs PyPortfolioOpt/riskfolio/skfolio/cvxpy): [x] CDaR convex objective — DONE
+  2026-06-03; [x] transaction-cost-aware rebalancing — DONE 2026-06-03. (CVaR was already done in P2.)
+  **cvxpy backend deferred** (gap analysis: its convex wins — sector caps/turnover/shorting — are already
+  reachable in scipy; only cardinality/MIQP is genuinely cvxpy-only; heavy dep → gate behind an optional
+  extra later if ever wanted).
+- **backtesting** (vs backtrader/zipline): [x] LongShortMomentum demo strategy exercising the `allow_short`
+  path — DONE 2026-06-03; [x] commission/slippage model library — DONE 2026-06-03. (parameter-sweep grid
+  ALREADY existed in `param_search.py` — only an optional `--sweep` CLI flag remains.) Still open:
+  multi-asset portfolio-level analytics in the dashboard; a borrow-fee model for realistic short P&L.
 - **market-data** (vs cryptofeed/ccxt-pro): an **order-book/L2 depth** stream (not just trades) — the headline
   gap vs cryptofeed; multi-symbol fan-out per connection; an expanding-batch adapter contract (Kraken/Bitstamp
   batches → multiple Trades, flagged in prior passes).
@@ -97,6 +100,68 @@ high-value picks (additive, contract-safe — verify each against the live API):
 ---
 
 ## Changelog
+
+## 2026-06-03 — main thread (/improve-quant) — P3 competitive features: options + portfolio + backtesting
+- **Theme:** the **P3 competitive-features** round, scoped by the user to 3 packages (options-pricing,
+  portfolio-optimization, backtesting), **gap-analysis-first**. Ran a fresh read-only `feature-architect`
+  gap analysis per package, reported back + confirmed picks with the user, then implemented 2 additive,
+  contract-safe picks per package via 3 parallel specialist subagents (disjoint file sets; subagents did NOT
+  commit or edit this ledger — the main thread owns commits + the ledger to avoid races). Main thread
+  **re-ran all 3 suites independently** before committing. All on `feature/agent-improvements` (**NOT pushed**).
+  Three conventional commits (one per package). NO new dependencies; NO existing public signature changed.
+- **Gap analysis corrected the backlog in two places:** (1) portfolio's **CVaR was already done** in P2 (the
+  backlog conflated it with CDaR) → implemented **CDaR** instead; **cvxpy deferred** (its convex wins —
+  sector caps/turnover/shorting — are already reachable in scipy; only cardinality/MIQP is genuinely
+  cvxpy-only; heavy dep not worth it). (2) backtesting's **parameter-sweep grid already existed**
+  (`param_search.py`) → implemented the long/short strategy + cost-model library instead.
+- **options-pricing (vs QuantLib): 238 tests (was 209), coverage 99.35% (gate 95%).**
+  - NEW `src/monte_carlo.py`: `monte_carlo_price(...) -> MCResult(price, std_error)` — GBM terminal-price MC
+    for European calls/puts with **antithetic variates + a Black-Scholes control variate** (variance-minimizing
+    beta; control-variate mean `S·e^(-qT)` so dividends stay correct; SE over antithetic pair-means). Reuses
+    the existing BS for degenerate cases. Self-validates: seeded MC converges to closed-form BS within ~3 SE.
+  - NEW `src/vol_surface.py`: Gatheral **raw-SVI** per-expiry fit (`fit_svi_slice`, `fit_svi_surface`) on the
+    EXISTING `solve_iv_surface()` tidy DataFrame via `scipy.optimize.least_squares` on total variance w²=θ·T
+    vs log-moneyness; `svi_total_variance`/`svi_implied_vol`/`svi_smile` evaluators (`SVIParams` NamedTuple).
+  - Reachability: `main.py` MC demo line (MC ± SE vs BS); Streamlit IV-surface tab now overlays the fitted SVI
+    smile on the solved-IV points (offline-safe). Both new modules **100% covered**.
+  - Domain accuracy: documented MC as GBM-only (NOT stochastic-vol) and SVI as a smile fit/interpolation (NOT
+    arbitrage-free); README moved MC + vol-surface fit into "does", LEFT exotics/barriers/finite-difference/
+    Heston in the not-done column. Test badge 209→238.
+- **portfolio-optimization (vs PyPortfolioOpt/cvxpy): 285 tests (was 260), coverage 96.43% (gate 90%).**
+  - NEW `optimize_min_cdar(confidence=0.95, **cons)` + `_min_cdar_lp` (Chekhlov–Uryasev–Zabarankin LP via
+    `scipy.optimize.linprog` HiGHS, mirrors `_min_cvar_lp`; decision vec `[w, alpha, s(T), u(T)]`, `u_t` tracks
+    the running peak of the **uncompounded** `cumsum` return path). Inherits bounds + sector caps (`groups=`)
+    for free; **zero-arg-callable**, returns a standard `PortfolioResult`. Wired into `analysis`
+    (`_OBJECTIVE_METHODS` + `_selected_objectives`), `config.OBJECTIVE_CHOICES`, FastAPI `_OBJECTIVES`, and the
+    Streamlit `OBJECTIVES` registry. Added `portfolio_cdar` helper.
+  - NEW opt-in **transaction-cost-aware rebalancing**: `current_weights`/`transaction_cost` kwargs threaded
+    through the SLSQP objectives (sharpe/min_vol/sortino/max_return_target_vol/min_vol_target_return) as an L1
+    turnover penalty `sum(cost·|w−w_prev|)`. **Default `current_weights=None`/`cost=0` is byte-identical**
+    (verified `np.allclose atol=1e-12`), preserving the zero-arg contract + `PortfolioResult` shape. Optional
+    `current_weights`/`transaction_cost` fields on the FastAPI `/optimize` body (unknown tickers → 422).
+  - **Cross-package contract re-verified:** backtesting suite re-run green (228) — its package was NOT edited.
+    Documented CDaR's arithmetic (`cumsum`) drawdown as related-but-distinct from `metrics.py`'s geometric
+    `max_drawdown` (no metrics-parity claim for the CDaR value). Test badge bumped to 285.
+- **backtesting (vs backtrader/zipline): 228 tests (was 207), coverage 89.55% (gate 80%).**
+  - NEW `LongShortMomentum` (`src/strategy.py`): ranks the universe each rebalance, LONGs top-K at `+w` /
+    SHORTs bottom-K at `−w` via signed `SignalEvent(target_weight=±w)` (modeled on `CrossSectionalMomentum`;
+    top_k capped to len//2 so baskets don't overlap; does NOT route through the optimizer). Finally exercises
+    the fully-built-but-dormant `allow_short` path end-to-end. `--strategy long_short` (forces
+    `Portfolio(allow_short=True)`). Documented as a MECHANICS demo — NO borrow-fee/locate model, so short P&L
+    is idealized.
+  - NEW `src/costs.py` model library: `CommissionModel` ABC + Percent(default)/PerShare(+minimum)/Fixed;
+    `SlippageModel` ABC + Percent(default)/FixedBps. Injectable into `SimulatedExecution` via optional
+    `commission_model=`/`slippage_model=`; the original `commission_pct`/`slippage_pct` floats stay and build
+    the Percent models when omitted ⇒ **fills byte-identical** to before (regression-locked). `costs.py` 100%.
+- **Verification (REAL, main thread re-ran):** options **238** / portfolio **285** / backtesting **228** — all
+  green, gates met (99.35 / 96.43 / 89.55%). ruff + ruff-format + mypy clean across all three (incl.
+  `mypy api/app.py` standalone). Cross-package contract intact (backtester ↔ optimizer, shared `metrics`).
+  Total Python now ~751 across these 3 + market-data 222 + order-book 41 = ~1014 + 53 C++.
+- **User actions:** still **NOTHING PUSHED** — push `feature/agent-improvements` when ready, then connect
+  Render Blueprint + Netlify. **Next pass (remaining P3):** market-data L2 order-book depth stream (headline
+  gap vs cryptofeed) + multi-symbol fan-out; cpp/order-book ABIDES-lite (discrete-event clock + agents) / WASM
+  showcase core. Optional smaller items: options SABR fit + arbitrage-free SVI constraints; backtesting
+  multi-asset dashboard analytics + borrow-fee model + `--sweep` CLI flag; portfolio cvxpy cardinality extra.
 
 ## 2026-06-03 — main thread (/improve-quant) — team-usability pass: one-command DX + UI/UX + architecture docs
 - **Theme:** make the monorepo *team-usable* — clone-and-run in one command, every app a polished product,
