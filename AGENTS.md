@@ -35,11 +35,22 @@ order-book **53 C++ + 41 py** — all green, gates met; ruff/format/mypy clean; 
 `feature/agent-improvements` + `main`. **NOTHING PUSHED** — the 2026-06-03 work was **squashed into one commit**;
 the branch still awaits the user's push.
 
-**Do next — P3: competitive features (user-requested for this round; see the P3 backlog in `IMPROVEMENTS.md`).**
-Run a fresh `feature-architect` gap analysis per package first, then implement the confirmed high-value picks
-(e.g. options Monte-Carlo + SVI/SABR; portfolio cvxpy backend / CVaR; market-data L2 order-book stream;
-backtesting long/short demo + slippage models; order-book ABIDES-lite / WASM). All additive + contract-safe.
-First action for the user: **push the branch**, then connect Render Blueprint + Netlify.
+**P3: competitive features — IN PROGRESS.** Gap-analysis-first per package (read-only `feature-architect`),
+confirm with the user, then implement additive + contract-safe picks.
+- **Done (2026-06-03), 3 of 5 packages** (tests after: options **238** / portfolio **285** / backtesting
+  **228**; all green, gates met, ruff/format/mypy clean, contract intact):
+  - **options-pricing:** Monte-Carlo pricer (GBM, antithetic + control variate) + SVI vol-surface fit.
+  - **portfolio-optimization:** CDaR objective + opt-in transaction-cost rebalancing (cvxpy deferred — its
+    convex wins are already in scipy; only cardinality/MIQP truly needs it).
+  - **backtesting:** `LongShortMomentum` (exercises `allow_short` end-to-end) + commission/slippage model lib.
+- **Do next — remaining P3, 2 untouched packages** (see the P3 backlog + newest changelog entry in
+  `IMPROVEMENTS.md`): **market-data** L2 order-book depth stream (headline gap vs cryptofeed) + multi-symbol
+  fan-out; **cpp/order-book** ABIDES-lite (discrete-event latency clock + agent participants) / WASM showcase
+  core. Smaller optional follow-ups also logged (options SABR + arbitrage-free SVI; backtesting multi-asset
+  dashboard analytics + borrow-fee model + `--sweep`; portfolio cvxpy cardinality extra).
+
+First action for the user: **push the branch** (`feature/agent-improvements`), then connect Render Blueprint
++ Netlify. Nothing has been pushed.
 
 ---
 
