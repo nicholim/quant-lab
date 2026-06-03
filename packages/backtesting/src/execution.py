@@ -1,5 +1,11 @@
 from abc import ABC, abstractmethod
 
+from .costs import (
+    CommissionModel,
+    PercentCommission,
+    PercentSlippage,
+    SlippageModel,
+)
 from .data_handler import DataHandler
 from .events import Direction, FillEvent, OrderEvent, OrderType
 
@@ -22,15 +28,28 @@ class SimulatedExecution(ExecutionHandler):
     are queued and evaluated each bar via ``check_pending`` against the bar's
     intrabar high/low; orders sharing an ``oco_group`` are cancelled once a
     sibling fills (brackets / one-cancels-other).
+
+    Costs are pluggable via :mod:`src.costs`. The original ``commission_pct`` /
+    ``slippage_pct`` floats are retained for back-compat: when no
+    ``commission_model`` / ``slippage_model`` is supplied they construct a
+    :class:`PercentCommission` / :class:`PercentSlippage` from those floats, so
+    the default behavior is byte-identical to before. Injecting a model
+    overrides the corresponding float.
     """
 
     def __init__(
         self,
         commission_pct: float = 0.001,
         slippage_pct: float = 0.0005,
+        commission_model: CommissionModel | None = None,
+        slippage_model: SlippageModel | None = None,
     ):
         self.commission_pct = commission_pct
         self.slippage_pct = slippage_pct
+        self.commission_model: CommissionModel = commission_model or PercentCommission(
+            commission_pct
+        )
+        self.slippage_model: SlippageModel = slippage_model or PercentSlippage(slippage_pct)
         self._pending: list[OrderEvent] = []
 
     def execute_order(self, order: OrderEvent, data: DataHandler) -> FillEvent | None:
@@ -91,9 +110,7 @@ class SimulatedExecution(ExecutionHandler):
     # --- helpers ---
 
     def _apply_slippage(self, price: float, direction: Direction) -> float:
-        if direction == Direction.BUY:
-            return price * (1 + self.slippage_pct)
-        return price * (1 - self.slippage_pct)
+        return self.slippage_model.adjust(price, direction)
 
     def _trigger_price(self, order: OrderEvent, bar: dict) -> float | None:
         """Return the fill price if the order triggers on this bar, else None."""
@@ -118,7 +135,7 @@ class SimulatedExecution(ExecutionHandler):
         self, order: OrderEvent, fill_price: float, base_price: float, timestamp
     ) -> FillEvent:
         slippage_cost = abs(fill_price - base_price) * order.quantity
-        commission = fill_price * order.quantity * self.commission_pct
+        commission = self.commission_model.commission(fill_price, order.quantity)
         return FillEvent(
             timestamp=timestamp,
             symbol=order.symbol,

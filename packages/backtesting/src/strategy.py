@@ -381,3 +381,94 @@ class CrossSectionalMomentum(Strategy):
         winners = sorted(returns, key=lambda t: returns[t], reverse=True)[: self.top_k]
         weight = 1.0 / len(winners)
         return {t: (weight if t in winners else 0.0) for t in self.tickers}
+
+
+class LongShortMomentum(Strategy):
+    """Dollar-neutral cross-sectional momentum: LONG the top-K, SHORT the bottom-K.
+
+    At each rebalance the universe is ranked by trailing return; the strongest
+    ``top_k`` are targeted at ``+weight`` and the weakest ``top_k`` at
+    ``-weight`` (the rest flat), emitted directly as ``SignalEvent`` target
+    weights. It deliberately does NOT route through the optimizer (whose output
+    is long-only) — emitting ranked signed weights is what exercises the short
+    path. Coordination across symbols uses the same first-ticker-of-bar pattern
+    as :class:`CrossSectionalMomentum`.
+
+    Safety: ``TargetWeightSizer`` clamps negative targets to 0 when the portfolio
+    has ``allow_short=False``, so this strategy degrades to a long-only top-K
+    basket without error in a long-only portfolio. With ``allow_short=True`` it
+    drives the dormant short path end-to-end.
+
+    DOMAIN-ACCURACY CAVEAT: this is a MECHANICS demonstration of the short path,
+    not a realistic strategy. The engine has no borrow-fee / locate /
+    hard-to-borrow model, so the short-leg P&L is idealized — do not read it as
+    realistic short returns.
+    """
+
+    def __init__(
+        self,
+        tickers: list[str],
+        lookback: int = 60,
+        top_k: int = 1,
+        rebalance_freq: int = 21,
+        weight: float = 0.5,
+    ):
+        self.tickers = list(tickers)
+        self.lookback = lookback
+        # Cap top_k so the long and short baskets never overlap.
+        self.top_k = max(1, min(top_k, len(self.tickers) // 2))
+        self.rebalance_freq = rebalance_freq
+        self.weight = weight
+        self._bar = 0
+        self._last_rebalance = -(10**9)
+        self._rebalance_now = False
+        self._targets: dict[str, float] | None = None
+
+    def calculate_signals(self, event: MarketEvent, data: DataHandler) -> SignalEvent | None:
+        if event.symbol == self.tickers[0]:
+            self._bar += 1
+            self._rebalance_now = (
+                self._bar >= self.lookback + 1
+                and (self._bar - self._last_rebalance) >= self.rebalance_freq
+            )
+            if self._rebalance_now:
+                targets = self._rank(data)
+                if targets is not None:
+                    self._targets = targets
+                    self._last_rebalance = self._bar
+                else:
+                    self._rebalance_now = False
+
+        if self._rebalance_now and self._targets and event.symbol in self._targets:
+            return SignalEvent(
+                timestamp=event.timestamp,
+                symbol=event.symbol,
+                direction=Direction.BUY,
+                target_weight=self._targets[event.symbol],
+            )
+        return None
+
+    def _rank(self, data: DataHandler) -> dict[str, float] | None:
+        """+weight for the top-K performers, -weight for the bottom-K, 0 otherwise."""
+        returns = {}
+        for ticker in self.tickers:
+            bars = data.get_latest_bars(ticker, self.lookback + 1)
+            if len(bars) < self.lookback:
+                return None
+            r = bars["Close"].pct_change(self.lookback).iloc[-1]
+            if pd.isna(r):
+                return None
+            returns[ticker] = r
+
+        ranked = sorted(returns, key=lambda t: returns[t], reverse=True)
+        longs = set(ranked[: self.top_k])
+        shorts = set(ranked[-self.top_k :])
+        targets: dict[str, float] = {}
+        for t in self.tickers:
+            if t in longs:
+                targets[t] = self.weight
+            elif t in shorts:
+                targets[t] = -self.weight
+            else:
+                targets[t] = 0.0
+        return targets

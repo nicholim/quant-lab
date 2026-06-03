@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-205%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-228%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~89%25-brightgreen.svg)](pyproject.toml)
 
 **A multi-asset, event-driven backtester that fills at the next bar's open, persists every run to DuckDB for SQL comparison, and runs walk-forward MPT-optimized portfolios out-of-sample.**
@@ -85,11 +85,12 @@ to the engine's shared `metrics` module) and the run is persisted to DuckDB.
 
 - **Event-Driven Architecture** — Decoupled components communicating via typed events (Market, Signal, Order, Fill)
 - **DuckDB Data Store** — Local caching of market data (instant re-runs) + persistent backtest results with SQL query interface
-- **Strategy Library** — Built-in SMA crossover, z-score mean reversion, momentum, and an **MPT walk-forward rebalancer** powered by the [portfolio-optimization-engine](../portfolio-optimization-engine)
+- **Strategy Library** — Built-in SMA crossover, z-score mean reversion, momentum, a **long/short cross-sectional momentum** demo (`LongShortMomentum`), and an **MPT walk-forward rebalancer** powered by the [portfolio-optimization-engine](../portfolio-optimization-engine)
+- **Long/short demo strategy** — `LongShortMomentum` ranks the universe each rebalance and goes LONG the top-K (`+w`) / SHORT the bottom-K (`-w`) via signed target weights — the strategy that actually exercises the `allow_short` path end-to-end (it does *not* route through the long-only optimizer). It is a **mechanics demonstration** of the short path: the engine has no borrow-fee / locate / hard-to-borrow model, so its short-leg P&L is idealized, not realistic. In a long-only portfolio the short leg is clamped to flat automatically
 - **MPT Integration** — `OptimizationRebalanceStrategy` re-optimizes target weights on a rolling window and executes them net of costs — an out-of-sample test of optimized portfolios. Supports seven objectives: `sharpe`, `min_vol`, `min_cvar`, `risk_parity`, `sortino`, and the target-constrained `max_return_target_vol` / `min_vol_target_return` (the last two take a `target` annual vol cap / minimum annual return)
 - **Realistic fills** — Orders fill at the **next bar's open**, not the signal bar's close (avoids the same-bar fill that overstates results)
 - **Shared metrics** — Sharpe/Sortino/drawdown come from the engine's `metrics` module, so this backtester and the optimizer report identical numbers for the same return series
-- **Transaction Costs** — Configurable slippage model and percentage-based commissions
+- **Commission & slippage model library** (`src/costs.py`) — pluggable `CommissionModel` (`PercentCommission` default, `PerShareCommission` with a per-trade minimum floor, `FixedCommission`) and `SlippageModel` (`PercentSlippage` default, `FixedBpsSlippage`), injected into `SimulatedExecution(commission_model=..., slippage_model=...)`. The original `commission_pct` / `slippage_pct` floats still work and are byte-identical when no model is supplied. Matches backtrader's common `CommInfoBase` PERC/FIXED/per-share + pluggable slippage cases (no borrow/financing model)
 - **Position Sizing** — Pluggable sizers: fixed-fractional, percent-of-equity, risk-based (vol-targeted), target-weight
 - **Order Types** — MARKET (next-open fill) plus resting LIMIT and STOP orders, with OCO/bracket groups (one fill cancels the siblings)
 - **Protective Exits** — Per-position stop-loss, take-profit, and trailing stops, checked every bar
@@ -153,11 +154,14 @@ python main.py --strategy sma --data-csv ./all.csv --csv-combined --tickers AAPL
 
 # Walk-forward Hierarchical Risk Parity (HRP) rebalancing:
 python main.py --strategy optimize --objective hrp --offline --tickers AAA BBB CCC
+
+# Long/short cross-sectional momentum (auto-enables shorting; mechanics demo):
+python main.py --strategy long_short --offline --tickers AAA BBB CCC
 ```
 
 | Flag | Effect |
 |------|--------|
-| `--strategy {sma,mean_reversion,momentum,optimize}` | Run one strategy instead of the demo |
+| `--strategy {sma,mean_reversion,momentum,long_short,optimize}` | Run one strategy instead of the demo (`long_short` auto-enables shorting) |
 | `--allow-short` | Enable native short selling (default off = long-only) |
 | `--data-source {yfinance,csv}` / `--data-csv PATH` | Load OHLCV from CSV instead of yfinance |
 | `--csv-combined` | Treat `--data-csv` as one combined file with a `symbol` column |
@@ -265,7 +269,7 @@ tool's **open-source** edition as of mid-2026.
 | Resting LIMIT/STOP + OCO brackets | Yes | Yes | PRO-only expanded orders | Limited | Yes |
 | Per-position trailing/protective exits | Yes | Yes | Path-dependent stops are PRO | Basic SL/TP | Yes |
 | Short selling | **Yes (opt-in, signed FIFO)** | Yes | Yes | Yes | Yes |
-| Slippage + commission models | Yes (first-class) | Yes | Basic (fees/slippage scalars) | Basic | Yes (slippage + cost models) |
+| Slippage + commission models | **Yes (pluggable: percent / per-share+min / fixed; percent / fixed-bps slippage)** | Yes (`CommInfoBase` PERC/FIXED/per-share + pluggable slippage) | Basic (fees/slippage scalars) | Basic | Yes (slippage + cost models) |
 | Walk-forward MPT optimization | **Yes** (calls optimizer engine) | DIY | DIY | DIY | DIY (Pyfolio/empyrical) |
 | Result persistence + SQL query | **Yes (DuckDB)** | No | No | No | Ingest bundles (no run DB) |
 | Parameter sweep / heatmap | Yes (grid + walk-forward) | Yes (optstrategy) | **Yes (fastest at scale)** | Yes | Limited |
@@ -523,10 +527,11 @@ backtesting-framework/
     ├── datastore.py        # DuckDB store: OHLCV cache, result persistence, SQL queries
     ├── events.py           # Typed event classes (Market, Signal, Order, Fill)
     ├── data_handler.py     # DataHandler ABC + YFinance/CSV/DataFrame handlers (shared no-look-ahead reads)
-    ├── strategy.py         # Strategy ABC + SMA, Mean Reversion, Momentum, CrossSectional, OptimizationRebalance
+    ├── strategy.py         # Strategy ABC + SMA, Mean Reversion, Momentum, CrossSectional, LongShortMomentum, OptimizationRebalance
     ├── sizing.py           # Sizer ABC + FixedFractional/PercentOfEquity/RiskBased/TargetWeight
+    ├── costs.py            # CommissionModel/SlippageModel libraries (percent/per-share/fixed/bps)
     ├── portfolio.py        # Position/cash tracking; delegates sizing to a Sizer
-    ├── execution.py        # Simulated execution (next-open fills, slippage & commission)
+    ├── execution.py        # Simulated execution (next-open fills, pluggable slippage & commission)
     ├── analytics.py        # Reports/plots; risk metrics (incl. beta/alpha) delegated to the engine
     ├── param_search.py     # Grid-search + walk-forward optimization, heatmap
     ├── interactive.py      # Interactive Bokeh equity/drawdown charts (HTML)

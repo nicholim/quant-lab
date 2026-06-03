@@ -13,6 +13,7 @@ from src.execution import SimulatedExecution
 from src.portfolio import Portfolio
 from src.strategy import (
     CrossSectionalMomentum,
+    LongShortMomentum,
     MeanReversion,
     MovingAverageCrossover,
     OptimizationRebalanceStrategy,
@@ -43,7 +44,7 @@ def run_strategy(name: str, tickers, start, end, strategy, store, capital=100_00
 # zero-argument behavior (the four-strategy DuckDB showcase); the new flags only
 # change behavior when explicitly passed.
 
-_STRATEGIES = ("sma", "mean_reversion", "momentum", "optimize")
+_STRATEGIES = ("sma", "mean_reversion", "momentum", "long_short", "optimize")
 _OBJECTIVES = (
     "sharpe",
     "min_vol",
@@ -161,11 +162,17 @@ def build_data_handler(args: argparse.Namespace, store: DataStore | None) -> Dat
 
 
 def build_portfolio(args: argparse.Namespace) -> Portfolio:
-    """Construct the portfolio, threading ``--allow-short`` through."""
+    """Construct the portfolio, threading ``--allow-short`` through.
+
+    The ``long_short`` demo strategy emits negative target weights, so it is run
+    with shorting enabled regardless of the flag (the whole point is to exercise
+    the short path); for every other strategy ``--allow-short`` controls it.
+    """
+    allow_short = args.allow_short or args.strategy == "long_short"
     return Portfolio(
         initial_capital=args.capital,
         position_size_pct=0.15,
-        allow_short=args.allow_short,
+        allow_short=allow_short,
     )
 
 
@@ -177,6 +184,10 @@ def build_strategy(args: argparse.Namespace):
         return MeanReversion(lookback=20, entry_z=2.0, exit_z=0.5)
     if args.strategy == "momentum":
         return CrossSectionalMomentum(
+            list(args.tickers), lookback=126, top_k=1, rebalance_freq=args.rebalance_freq
+        )
+    if args.strategy == "long_short":
+        return LongShortMomentum(
             list(args.tickers), lookback=126, top_k=1, rebalance_freq=args.rebalance_freq
         )
     if args.strategy == "optimize":

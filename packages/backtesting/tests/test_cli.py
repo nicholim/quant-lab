@@ -23,6 +23,7 @@ import pytest
 
 import main as cli
 from src.data_handler import CSVDataHandler, YFinanceDataHandler
+from src.strategy import LongShortMomentum
 
 
 def _ohlcv(close):
@@ -205,6 +206,45 @@ class TestOffline:
         import os
 
         assert "BACKTESTING_OFFLINE" not in os.environ
+
+
+# --- long_short demo strategy ----------------------------------------------
+
+
+class TestLongShortStrategy:
+    def test_long_short_is_a_valid_strategy(self):
+        args = cli.build_parser().parse_args(["--strategy", "long_short"])
+        assert args.strategy == "long_short"
+
+    def test_long_short_builds_short_enabled_portfolio(self):
+        # long_short forces shorting on even without --allow-short.
+        args = cli.build_parser().parse_args(["--strategy", "long_short"])
+        assert cli.build_portfolio(args).allow_short is True
+
+    def test_build_strategy_returns_long_short_momentum(self):
+        args = cli.build_parser().parse_args(["--strategy", "long_short"])
+        assert isinstance(cli.build_strategy(args), LongShortMomentum)
+
+    def test_long_short_runs_end_to_end(self):
+        args = cli.build_parser().parse_args(
+            [
+                "--strategy",
+                "long_short",
+                "--offline",
+                "--tickers",
+                "AAA",
+                "BBB",
+                "CCC",
+                "--start",
+                "2021-06-01",
+                "--end",
+                "2022-06-01",
+                "--rebalance-freq",
+                "21",
+            ]
+        )
+        analytics = cli.run_single(args)
+        assert len(analytics.equity) > 0
 
 
 # --- HRP objective ---------------------------------------------------------
