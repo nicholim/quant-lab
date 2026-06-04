@@ -103,6 +103,35 @@ high-value picks (additive, contract-safe — verify each against the live API):
 
 ## Changelog
 
+## 2026-06-04 — main thread (/improve-quant) — thorough recheck of the P3 work + 2 hardening fixes
+- **Theme:** user asked for a thorough recheck of the 2026-06-04 P3 features (market-data L2 depth + order-book
+  ABIDES-lite), "not just pytest". Ran two deep `code-reviewer` subagents (one per changeset, parallel) PLUS
+  main-thread runtime/edge-case probing against the real engine + real `Config` objects. Verdict: **no real
+  correctness bugs.** All on `feature/agent-improvements` (NOT pushed); 2 small `fix:` commits + this note.
+- **Empirically verified (by execution, not just tests):** abides_lite determinism (same-seed byte-identical incl.
+  full arrival sequence; diff-seed divergent); latency reordering real (799). **Refuted reviewer "C2"** (zero-price
+  market fills): the C++ engine does NOT rest unmatched MARKET orders (`best_bid` stays `None`; a later limit does
+  not match a phantom $0 order) — so the GTC default for market orders is harmless. Market-data trades-only parity
+  (`ENABLE_DEPTH` unset → no depth adapter, `normalize_depth`→`None`); single-symbol depth symbol resolves via the
+  hint; multi vs single fan-out URL forms correct. Reviewer market-data "Criticals" (#1 `with_symbol_hint` return
+  discarded, #2 `depth_client` stores trades URL) confirmed HARMLESS (in-place mutation works; adapter `ws_url()`
+  overrides at connect).
+- **Two low-risk hardening fixes applied (with tests):**
+  - **order-book** `SimulationKernel.run(until=)`: was popping-then-discarding the first out-of-window event, so a
+    resumed `run(until=...)` lost it. Now pushes it back before breaking (kernel is resumable in time slices).
+    `max_events` was already safe (breaks before popping); the demo path uses `max_events` → output unchanged (799).
+    pytest 59→**60**, coverage 98.91%; ctest **53/53**.
+  - **market-data** depth task: the opt-in depth connection was fire-and-forget — a crash only surfaced as asyncio's
+    "Task exception was never retrieved" warning. Added an `add_done_callback` observer that retrieves + logs an
+    actionable error (ignores expected cancellation on stop); trades feed unaffected. pytest 273→**277**, 98.16%.
+- **Not changed (deliberate):** `count_latency_reorderings` adjacent-pair scan undercounts true inversions (reviewer
+  I1) — left as-is because it's a demo metric and changing it would change the reported headline number; the
+  "evidence of reordering" claim stays directionally honest. MARKET-order TIF left GTC (engine never rests them).
+- **Verification (REAL, main thread):** order-book **60 py** + **53/53 ctest** + demo OK; market-data **277**
+  (98.16%); ruff/format/mypy clean on both. Other 3 packages untouched.
+- **User actions:** unchanged — still **NOTHING PUSHED**; push `feature/agent-improvements` (now 5 commits past the
+  prior squash base) when ready, then connect Render + Netlify.
+
 ## 2026-06-04 — main thread (/improve-quant) — P3 competitive features COMPLETE: market-data L2 depth + order-book ABIDES-lite
 - **Theme:** the **final P3 round** — the 2 packages left untouched after 2026-06-03 (market-data, cpp/order-book),
   user-confirmed picks (market-data: L2 depth + multi-symbol; order-book: ABIDES-lite, **not** WASM). Two parallel
