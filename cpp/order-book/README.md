@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![clang-format](https://img.shields.io/badge/code%20style-clang--format-1f425f.svg)](.clang-format)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-53%20C%2B%2B%20%7C%2041%20Python-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-53%20C%2B%2B%20%7C%2059%20Python-brightgreen.svg)](tests/)
 
 A real **price-time-priority limit order book matching engine** in C++17, with a Python layer for
 order-flow simulation and depth-of-book visualization.
@@ -68,6 +68,7 @@ graph LR
 | **Python bindings** | pybind11 module exposing `OrderBook`/`MatchingEngine`/`Order`/`Trade` + the `Side`/`OrderType`/`TimeInForce` enums so Python drives the live engine | `src/bindings.cpp`, `python/orderbook/` |
 | **Python viz** | Depth chart, trade tape, spread-over-time (matplotlib) — rendered from real engine state | `python/visualizer.py` |
 | **Python sim** | Synthetic order flow driven through the **live C++ engine** via the binding; collects real fills, spread, and depth | `python/simulator.py` |
+| **ABIDES-lite** | Discrete-event kernel (sim-time event queue) + agent participants (noise trader, market maker) with per-agent agent→exchange **latency** so arrival order ≠ submission order; all matching done by the C++ engine | `python/abides_lite.py` |
 
 ## Features
 
@@ -204,6 +205,39 @@ flow to `orderbook.OrderBook.add_order` and reads fills/depth/spread straight
 off the C++ engine, then hands that real state to `visualizer.py`. (Requires the
 compiled extension; build it in step 1 first.)
 
+### ABIDES-lite — discrete-event latency clock + agent simulation
+
+`python/abides_lite.py` adds an **agent-based, discrete-event simulation** on top of the same C++
+engine. Unlike `simulator.py` (which replays a fixed flow in submission order), the kernel here owns
+a **simulated clock** and processes events from a timestamp-ordered queue. Each agent has a one-way
+**agent→exchange latency**, so an order's *arrival* time at the book is `decision_time + latency` —
+i.e. order arrival order reflects **latency, not submission order**. This is the one capability that
+distinguishes a matching-engine *simulator* (ABIDES) from a bare matching engine.
+
+```bash
+# Deterministic run: 6 noise (zero-intelligence) traders + 2 market makers,
+# their orders flowing through the LIVE C++ engine, processed in sim-time order.
+python python/abides_lite.py --steps 4000 --seed 42
+python python/abides_lite.py --noise 10 --makers 3 --ref-price 100 --seed 7
+```
+
+A sample summary line reports `latency reorderings: N arrivals landed out of decision order` — direct
+evidence the latency clock reordered the flow (with all latencies equal that count is 0; with a spread
+of latencies it is large). Pieces:
+
+- **`SimulationKernel`** — min-heap event queue keyed by integer-nanosecond sim time; processes
+  `WAKEUP` (an agent thinks) and `ARRIVAL` (an order reaches the book) events strictly in time order,
+  breaking ties FIFO by insertion sequence (so a fixed seed is fully reproducible). It never matches —
+  every arrival is submitted to the real `OrderBook` and the engine's fills are recorded.
+- **`NoiseAgent`** — a zero-intelligence random trader (ABIDES' "ZI" archetype).
+- **`MarketMakerAgent`** — quotes a symmetric `POST_ONLY` bid/ask around the engine's live mid.
+
+**Honesty vs ABIDES:** this is a *lite* model — no ITCH/OUCH wire protocol, no exchange-agent message
+bus, no per-agent computation-time accounting, no geography, and no thousands-of-agents scale. It also
+adds **no** stochastic-intensity / Avellaneda-Stoikov fill model: fills come **only** from the real
+C++ matching engine. It models exactly one ABIDES capability — a discrete-event clock with
+agent→exchange latency driving real LOB matching.
+
 ### 3. Run the tests
 
 ```bash
@@ -211,8 +245,8 @@ compiled extension; build it in step 1 first.)
 cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 
-# Python tests (41 tests; drives the compiled pybind11 engine in-process +
-# covers the viz/sim modules). Build the extension first (step 1 above).
+# Python tests (59 tests; drives the compiled pybind11 engine in-process +
+# covers the viz/sim + ABIDES-lite agent layers). Build the extension first (step 1).
 pytest          # from the repo root; runs with coverage (--cov-fail-under=80)
 ```
 
@@ -307,8 +341,8 @@ include LOB matching plus latency modeling.
 |---|---|---|---|
 | Core idea | Deterministic price-time-priority matching engine | Discrete-event, multi-agent market simulator | Model-based LOB trading as an RL gym |
 | Real order matching | **Yes** — best-price-first, FIFO-in-level, partial fills | **Yes** — order-matching engine resolves crossing orders | **No** — fills come from stochastic intensity models (Avellaneda-Stoikov style) |
-| Latency modeling | No | **Yes** — discrete-event simulation models agent/network latency | Stochastic latency in the control model, not a network sim |
-| Background/trading agents | No (you drive order flow) | **Yes** — populations of interacting background agents | Agents are RL policies / an adversary, not a LOB crowd |
+| Latency modeling | **Partial** — an "ABIDES-lite" discrete-event kernel applies a per-agent agent→exchange latency so arrival order ≠ submission order (no network topology/geography) | **Yes** — discrete-event simulation models agent/network latency | Stochastic latency in the control model, not a network sim |
+| Background/trading agents | **Partial** — a small agent layer (zero-intelligence noise trader + a market maker) emits flow into the real engine; not ABIDES-scale | **Yes** — populations of interacting background agents | Agents are RL policies / an adversary, not a LOB crowd |
 | RL / gym interface | No | Yes (ABIDES-gym) | **Yes** — that's the point |
 | Language | C++17 core + Python viz | Python | Python (NumPy/Numba, vectorized) |
 | Best for | Learning/teaching matching mechanics; a fast, exact LOB primitive | Realistic market-microstructure & latency experiments | Training RL market-making agents on a stochastic model |
@@ -317,8 +351,10 @@ include LOB matching plus latency modeling.
 mechanics (price-time priority, partial fills, cancel/modify, multi-symbol routing) that the
 model-based tools abstract away.
 
-**What it intentionally doesn't do:** no latency/network simulation, no agent populations, no RL
-environment, no stochastic order-arrival model, and no exotic order types (see below).
+**What it intentionally doesn't do:** the optional `abides_lite.py` layer adds a discrete-event
+latency clock + a couple of background agents, but this is *not* ABIDES — no network topology, no
+ITCH/OUCH message bus, no RL environment, no stochastic order-arrival/fill model, no agent populations
+at scale, and no exotic order types (see below).
 
 **Who it's for:** anyone who wants to *see* how a matching engine actually works, or needs a small,
 fast, exact LOB primitive to build on — rather than a research-grade agent-based or RL framework.
@@ -347,12 +383,14 @@ order-book-simulator/
 │   ├── conftest.py           # Puts python/ on sys.path for the test suite
 │   ├── test_orderbook.py     # Binding-driven engine tests (in-process, no subprocess)
 │   ├── test_simulator_engine.py # Simulator→C++ engine→visualizer end-to-end (headless Agg)
-│   └── test_python_viz.py    # Visualizer/flow-generator tests (headless Agg)
+│   ├── test_python_viz.py    # Visualizer/flow-generator tests (headless Agg)
+│   └── test_abides_lite.py   # Discrete-event kernel: latency reordering, agents, determinism
 └── python/
     ├── requirements.txt
     ├── orderbook/            # pybind11 re-export package (compiled _orderbook lands here)
     ├── visualizer.py         # Depth chart, trade tape, spread plots (from real engine state)
-    └── simulator.py          # Order-flow generator + EngineSimulator (drives the C++ engine)
+    ├── simulator.py          # Order-flow generator + EngineSimulator (drives the C++ engine)
+    └── abides_lite.py        # Discrete-event latency clock + agent participants (ABIDES-lite)
 ```
 
 ## Data structures
