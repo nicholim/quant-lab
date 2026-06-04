@@ -88,11 +88,13 @@ high-value picks (additive, contract-safe — verify each against the live API):
   path — DONE 2026-06-03; [x] commission/slippage model library — DONE 2026-06-03. (parameter-sweep grid
   ALREADY existed in `param_search.py` — only an optional `--sweep` CLI flag remains.) Still open:
   multi-asset portfolio-level analytics in the dashboard; a borrow-fee model for realistic short P&L.
-- **market-data** (vs cryptofeed/ccxt-pro): an **order-book/L2 depth** stream (not just trades) — the headline
-  gap vs cryptofeed; multi-symbol fan-out per connection; an expanding-batch adapter contract (Kraken/Bitstamp
-  batches → multiple Trades, flagged in prior passes).
-- **cpp/order-book** (vs ABIDES): the strategic "ABIDES-lite" path — a discrete-event latency clock +
-  agent-based participants; a **WASM** core for an in-browser showcase demo (medium-effort showcase win).
+- **market-data** (vs cryptofeed/ccxt-pro): [x] an **order-book/L2 depth** stream (not just trades) — the headline
+  gap vs cryptofeed — DONE 2026-06-04 (`BinanceDepthAdapter`, opt-in `ENABLE_DEPTH`); [x] multi-symbol fan-out per
+  connection — DONE 2026-06-04. Still open: an expanding-batch adapter contract (Kraken/Bitstamp batches → multiple
+  Trades, flagged in prior passes); Coinbase `level2`/Kraken `book` depth adapters.
+- **cpp/order-book** (vs ABIDES): [x] the strategic "ABIDES-lite" path — a discrete-event latency clock +
+  agent-based participants — DONE 2026-06-04 (`python/abides_lite.py`). Still open: a **WASM** core for an in-browser
+  showcase demo (medium-effort showcase win; needs emscripten).
 - **cross-cutting:** wire the showcase "Live demo" buttons to the deployed Render URLs once the user deploys;
   optional `mkdocs`/site build for the docs (deferred this round to avoid a new build dep — Mermaid-in-Markdown
   was chosen instead).
@@ -100,6 +102,58 @@ high-value picks (additive, contract-safe — verify each against the live API):
 ---
 
 ## Changelog
+
+## 2026-06-04 — main thread (/improve-quant) — P3 competitive features COMPLETE: market-data L2 depth + order-book ABIDES-lite
+- **Theme:** the **final P3 round** — the 2 packages left untouched after 2026-06-03 (market-data, cpp/order-book),
+  user-confirmed picks (market-data: L2 depth + multi-symbol; order-book: ABIDES-lite, **not** WASM). Two parallel
+  `feature-architect` subagents on disjoint file sets (Python `packages/market-data` vs C++/Python `cpp/order-book`);
+  subagents did NOT commit or edit this ledger/badges — the main thread owns commits + ledger to avoid races. Main
+  thread **independently re-ran both suites + the C++ build + runtime demos** before committing. Two conventional
+  commits on `feature/agent-improvements` (**NOT pushed**). NO new dependencies; NO existing public signature changed.
+- **market-data (vs cryptofeed): 273 tests (was 222), coverage 98.14% (gate 85%).**
+  - NEW `BookLevel`/`BookUpdate` types (`src/normalizer.py`) — the depth analogue of `Trade`, with `best_bid`/
+    `best_ask` price properties. `TickNormalizer` gained an optional `depth_adapter` + `normalize_depth()` (returns
+    `None` when no depth adapter is set ⇒ trades-only path **byte-identical**, proven in tests).
+  - NEW `DepthAdapter` Protocol + `BinanceDepthAdapter` (`src/adapters.py`): the `<sym>@depth20@100ms` **partial-book**
+    stream (self-contained top-N snapshots — no diff/sequence/REST-bootstrap bookkeeping, the reason chosen over
+    incremental `@depth`/Coinbase `level2`). Binance's best-first bid/ask ordering maps straight onto `BookUpdate`.
+    `supports_depth()`/`build_depth_adapter()` + `_DEPTH_ADAPTERS` registry (binance only today). `with_symbol_hint()`
+    stamps the symbol on the lean single-symbol `/ws/<stream>` payload; multi-symbol uses the combined-stream
+    `/stream?streams=…` endpoint whose `{"stream":…,"data":{…}}` wrapper supplies the symbol.
+  - Threaded additively: `StorageBackend` gained `insert_book`/`query_book` (new `book` table in both `DuckDBStorage`
+    — bids/asks as JSON, also Parquet-exported — and `TimeSeriesStorage` hypertable/JSONB); `RedisCache` gained
+    `set_book`/`get_book` (`book:<symbol>`); `Pipeline` runs a SECOND `MarketDataClient` + `_on_depth_message`
+    (cache→publish→persist) as a concurrent task, gated behind `ENABLE_DEPTH` / `--enable-depth` (off by default).
+  - Multi-symbol fan-out per connection made explicit + tested (distinct symbols → distinct cache keys / independent
+    OHLCV accumulators over one connection); single configured symbol stays byte-identical.
+  - NEW tests `test_depth.py` (incl. end-to-end FakeWebSocket depth replay + single-symbol trades parity) +
+    `test_fanout.py`; extended `test_cli.py`/`test_storage.py`/`test_duckdb_storage.py`. README depth+fan-out sections
+    added; test badge 222→273.
+- **cpp/order-book (vs ABIDES): ctest 53/53 unchanged; pytest 59 (was 41), coverage 98.91% (gate 80%), abides_lite 99%.**
+  - NEW `python/abides_lite.py` — discrete-event sim layer **in Python** (deliberate: the C++ `OrderBook` matching
+    stays the single source of truth, untouched; the layer only schedules *when* agent orders reach the book via the
+    existing pybind11 binding + reads state back — no matching reimplemented, so GoogleTests stay at 53).
+    `SimulationKernel`: min-heap event queue keyed by integer-ns sim time, WAKEUP/ARRIVAL processed strictly in time
+    order (FIFO tie-break by insertion seq). Per-agent one-way `latency` ⇒ a WAKEUP at `t` emits orders ARRIVING at
+    `t+latency`, so arrival order reflects latency not decision order — the headline ABIDES-distinguishing capability.
+    Agents: `NoiseAgent` (ZI random) + `MarketMakerAgent` (symmetric POST_ONLY quotes around the live engine mid).
+  - Latency reordering DEMONSTRATED: `count_latency_reorderings()`; seed-42 demo (4000 events → 2249 arrivals, 998
+    trades) reports **799** reorderings; a deterministic unit test proves a fast-but-late-deciding agent arrives
+    before a slow-but-early one. NEW `tests/test_abides_lite.py` (+18: kernel ordering, latency, agent behavior,
+    determinism under fixed seed). README "ABIDES-lite / agent simulation" section + honest vs-ABIDES caveats (lite:
+    no ITCH/OUCH, no message bus, no per-agent compute time, not 1000s-of-agents scale; NO stochastic-intensity/
+    Avellaneda-Stoikov — fills come only from the real engine). Python test count 41→59.
+- **Verification (REAL, main thread re-ran):** market-data **273** (98.14%), order-book **53/53 ctest** + **59 py**
+  (98.91%); ruff/format/mypy clean on both. Runtime smokes: ABIDES-lite demo runs (799 reorderings); depth
+  normalization + both URL fan-out forms + `supports_depth` gating + trades-only parity all verified by hand. The
+  other 3 packages were NOT touched (git-confirmed) — options 238 / portfolio 285 / backtesting 228 stand from
+  2026-06-03; cross-package contract (backtester↔optimizer, shared `metrics`) intact.
+- **P3 IS NOW COMPLETE for all 5 packages.** Remaining items are all OPTIONAL polish (see below).
+- **User actions:** still **NOTHING PUSHED** — push `feature/agent-improvements` when ready, then connect Render
+  Blueprint + Netlify. **Optional follow-ups:** market-data Coinbase `level2`/Kraken `book` depth adapters (one class
+  each) + a normalized per-level book table; order-book WASM showcase core (needs emscripten); options SABR fit +
+  arbitrage-free SVI; backtesting multi-asset dashboard analytics + borrow-fee model + `--sweep` CLI; portfolio
+  cvxpy cardinality extra. No mandatory backlog items remain.
 
 ## 2026-06-03 — main thread (/improve-quant) — P3 competitive features: options + portfolio + backtesting
 - **Theme:** the **P3 competitive-features** round, scoped by the user to 3 packages (options-pricing,

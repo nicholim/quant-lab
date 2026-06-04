@@ -35,19 +35,24 @@ order-book **53 C++ + 41 py** — all green, gates met; ruff/format/mypy clean; 
 `feature/agent-improvements` + `main`. **NOTHING PUSHED** — the 2026-06-03 work was **squashed into one commit**;
 the branch still awaits the user's push.
 
-**P3: competitive features — IN PROGRESS.** Gap-analysis-first per package (read-only `feature-architect`),
-confirm with the user, then implement additive + contract-safe picks.
+**P3: competitive features — ✅ COMPLETE for all 5 packages (2026-06-03 + 2026-06-04).** Gap-analysis-first per
+package (read-only `feature-architect`), confirm with the user, then implement additive + contract-safe picks.
 - **Done (2026-06-03), 3 of 5 packages** (tests after: options **238** / portfolio **285** / backtesting
   **228**; all green, gates met, ruff/format/mypy clean, contract intact):
   - **options-pricing:** Monte-Carlo pricer (GBM, antithetic + control variate) + SVI vol-surface fit.
   - **portfolio-optimization:** CDaR objective + opt-in transaction-cost rebalancing (cvxpy deferred — its
     convex wins are already in scipy; only cardinality/MIQP truly needs it).
   - **backtesting:** `LongShortMomentum` (exercises `allow_short` end-to-end) + commission/slippage model lib.
-- **Do next — remaining P3, 2 untouched packages** (see the P3 backlog + newest changelog entry in
-  `IMPROVEMENTS.md`): **market-data** L2 order-book depth stream (headline gap vs cryptofeed) + multi-symbol
-  fan-out; **cpp/order-book** ABIDES-lite (discrete-event latency clock + agent participants) / WASM showcase
-  core. Smaller optional follow-ups also logged (options SABR + arbitrage-free SVI; backtesting multi-asset
-  dashboard analytics + borrow-fee model + `--sweep`; portfolio cvxpy cardinality extra).
+- **Done (2026-06-04), the final 2 packages** (tests after: market-data **273** / order-book **53 C++ + 59 py**;
+  all green, gates met, ruff/format/mypy clean, runtime demos verified):
+  - **market-data:** opt-in L2 order-book depth stream (`BinanceDepthAdapter`, `ENABLE_DEPTH`) — the headline gap
+    vs cryptofeed — + explicit multi-symbol fan-out per connection. Trades-only path byte-identical by default.
+  - **cpp/order-book:** ABIDES-lite — a discrete-event latency clock + agent participants (`python/abides_lite.py`,
+    NoiseAgent + MarketMakerAgent) driving the real C++ engine via the binding; matching untouched.
+- **Optional follow-ups only (no mandatory backlog left):** market-data Coinbase `level2`/Kraken `book` depth
+  adapters + normalized per-level book table; cpp/order-book **WASM** showcase core (needs emscripten); options
+  SABR + arbitrage-free SVI; backtesting multi-asset dashboard analytics + borrow-fee model + `--sweep`; portfolio
+  cvxpy cardinality extra.
 
 First action for the user: **push the branch** (`feature/agent-improvements`), then connect Render Blueprint
 + Netlify. Nothing has been pushed.
