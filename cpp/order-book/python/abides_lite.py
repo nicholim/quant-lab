@@ -433,6 +433,9 @@ class SimulationKernel:
                 break
             ev = heapq.heappop(self._queue)
             if until is not None and ev.time > until:
+                # The event is past the window — put it back so the kernel can
+                # be resumed with a later ``run(until=...)`` without losing it.
+                heapq.heappush(self._queue, ev)
                 break
             self._now = ev.time
             if ev.kind == WAKEUP:

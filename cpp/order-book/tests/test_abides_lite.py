@@ -97,6 +97,21 @@ class TestKernelOrdering:
         result = k.run(until=500)
         assert result.n_orders == 1  # the 900 event is beyond the horizon
 
+    def test_until_preserves_out_of_window_event_for_resume(self):
+        # The boundary event past `until` must NOT be consumed — a follow-up
+        # run with a later horizon must still process it (resumable kernel).
+        k = SimulationKernel("AAPL", seed=0)
+        buy = {"side": "BUY", "type": "LIMIT", "price": 1.0, "quantity": 1}
+        sell = {"side": "SELL", "type": "LIMIT", "price": 2.0, "quantity": 1}
+        k.schedule_arrival(100, 0, buy, 0)
+        k.schedule_arrival(900, 0, sell, 0)
+        first = k.run(until=500)
+        assert first.n_orders == 1
+        # Resume: the 900 event was put back, so it is processed now.
+        second = k.run(until=1000)
+        assert second.n_orders == 2
+        assert k.book.get_best_ask() == 2.0  # the resumed SELL reached the engine
+
 
 # --------------------------------------------------------------------------
 # Latency reordering — the headline capability
