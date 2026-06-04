@@ -154,8 +154,25 @@ class Pipeline:
             logger.info("L2 depth feed enabled for symbols: %s", self.config.symbols)
             self.depth_client.on_message(self._on_depth_message)
             self._depth_task = asyncio.create_task(self.depth_client.connect(self.config.symbols))
+            # Surface an unexpected depth-connection crash instead of letting it
+            # die as a silent "Task exception was never retrieved" warning. The
+            # trades feed keeps running regardless — depth is opt-in/best-effort.
+            self._depth_task.add_done_callback(self._on_depth_task_done)
 
         await self.client.connect(self.config.symbols)
+
+    def _on_depth_task_done(self, task: asyncio.Task) -> None:
+        """Log if the opt-in depth connection crashed unexpectedly.
+
+        Cancellation during :meth:`stop` is expected and ignored; any other
+        exception is retrieved (so asyncio does not warn) and logged so an
+        operator notices the depth feed died while trades kept flowing.
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("L2 depth feed stopped unexpectedly: %s: %s", type(exc).__name__, exc)
 
     async def stop(self) -> None:
         """Gracefully shut down all components."""

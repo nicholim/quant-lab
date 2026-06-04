@@ -12,7 +12,9 @@ path is byte-identical when depth is off.
 No live network: everything runs against in-memory fakes / an in-memory DuckDB.
 """
 
+import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -464,6 +466,96 @@ class TestPipelineDepthPath:
         assert p.depth_adapter is None
         assert p.depth_client is None
         assert p.normalizer.depth_adapter is None
+
+
+class TestDepthTaskFailureObserver:
+    """The opt-in depth connection must not die as a silent asyncio warning."""
+
+    def test_done_callback_logs_unexpected_exception(self, monkeypatch, caplog):
+        p = _depth_pipeline(monkeypatch)
+
+        class _BoomTask:
+            def cancelled(self):
+                return False
+
+            def exception(self):
+                return RuntimeError("ws boom")
+
+        with caplog.at_level(logging.ERROR):
+            p._on_depth_task_done(_BoomTask())
+        assert "depth feed stopped unexpectedly" in caplog.text
+        assert "ws boom" in caplog.text
+
+    def test_done_callback_silent_on_cancel(self, monkeypatch, caplog):
+        p = _depth_pipeline(monkeypatch)
+
+        class _CancelledTask:
+            def cancelled(self):
+                return True
+
+            def exception(self):  # pragma: no cover - must not be reached
+                raise AssertionError("exception() must not be called when cancelled")
+
+        with caplog.at_level(logging.ERROR):
+            p._on_depth_task_done(_CancelledTask())
+        assert "depth feed stopped" not in caplog.text
+
+    def test_done_callback_silent_on_clean_finish(self, monkeypatch, caplog):
+        p = _depth_pipeline(monkeypatch)
+
+        class _CleanTask:
+            def cancelled(self):
+                return False
+
+            def exception(self):
+                return None
+
+        with caplog.at_level(logging.ERROR):
+            p._on_depth_task_done(_CleanTask())
+        assert "depth feed stopped" not in caplog.text
+
+    async def test_start_attaches_callback_and_failing_connect_is_logged(self, monkeypatch, caplog):
+        """start() wires the observer; a crashing depth connect surfaces a log
+        and does NOT prevent the trades feed from running."""
+        p = _depth_pipeline(monkeypatch)
+
+        class _FakeTradeClient:
+            def __init__(self):
+                self.connected = False
+
+            def on_message(self, cb):
+                pass
+
+            async def connect(self, symbols):
+                self.connected = True  # trades keep running despite depth crash
+
+            async def disconnect(self):
+                pass
+
+        class _BoomDepthClient:
+            def on_message(self, cb):
+                pass
+
+            async def connect(self, symbols):
+                raise RuntimeError("depth ws down")
+
+            async def disconnect(self):
+                pass
+
+        p.client = _FakeTradeClient()
+        p.depth_client = _BoomDepthClient()
+
+        with caplog.at_level(logging.ERROR):
+            await p.start()
+            await asyncio.sleep(0)  # let the depth task run, fail, fire its callback
+            await asyncio.sleep(0)
+
+        assert p.client.connected is True  # trades unaffected
+        assert p._depth_task is not None and p._depth_task.done()
+        assert "depth feed stopped unexpectedly" in caplog.text
+        assert "depth ws down" in caplog.text
+        if p._flush_task:
+            p._flush_task.cancel()
 
 
 # --- End-to-end depth pipeline via FakeWebSocket --------------------------
