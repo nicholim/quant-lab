@@ -29,7 +29,22 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser (importable so the wiring is testable)."""
     parser = argparse.ArgumentParser(description="Real-Time Market Data Pipeline")
     parser.add_argument(
-        "--symbols", type=str, help="Comma-separated symbols (e.g., btcusdt,ethusdt)"
+        "--symbols",
+        type=str,
+        help=(
+            "Comma-separated symbols to fan out over ONE connection where the "
+            "exchange supports it (e.g., btcusdt,ethusdt). Overrides SYMBOLS/.env."
+        ),
+    )
+    parser.add_argument(
+        "--enable-depth",
+        action="store_true",
+        default=False,
+        help=(
+            "Also stream the L2 order-book DEPTH feed over a second connection "
+            "(opt-in; overrides ENABLE_DEPTH). Only effective on depth-capable "
+            "exchanges (currently binance). Default: trades only."
+        ),
     )
     parser.add_argument(
         "--exchange",
@@ -60,6 +75,8 @@ def build_config(args: argparse.Namespace) -> Config:
         config.symbols = args.symbols.split(",")
     if args.exchange:
         config.exchange = args.exchange.lower()
+    if args.enable_depth:
+        config.enable_depth = True
     if args.log_level:
         config.log_level = args.log_level
     return config

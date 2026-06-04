@@ -102,7 +102,41 @@ class TestInsertOHLCV:
         assert args[8] == "1m"  # interval
 
 
+class TestInsertBook:
+    async def test_insert_book_serializes_levels_as_json(self, storage, fake_pool):
+        book = {
+            "timestamp": datetime(2024, 1, 1, tzinfo=UTC),
+            "symbol": "btcusdt",
+            "bids": [{"price": 100.0, "quantity": 1.5}],
+            "asks": [{"price": 101.0, "quantity": 0.8}],
+            "exchange": "binance",
+        }
+        await storage.insert_book(book)
+        query, args = fake_pool.executed[0]
+        assert "INSERT INTO book" in query
+        assert args[1] == "btcusdt"
+        # bids/asks are passed as JSON strings (JSONB column).
+        import json
+
+        assert json.loads(args[2]) == [{"price": 100.0, "quantity": 1.5}]
+        assert json.loads(args[3]) == [{"price": 101.0, "quantity": 0.8}]
+        assert args[4] == "binance"
+
+
 class TestQueries:
+    async def test_query_book_passes_bounds_and_decodes_json(self, storage, fake_pool):
+        # asyncpg returns JSONB columns as str; query_book must decode them.
+        fake_pool.fetch_result = [
+            {"symbol": "btcusdt", "bids": '[{"price": 100.0, "quantity": 1.0}]', "asks": "[]"}
+        ]
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 1, 2, tzinfo=UTC)
+        rows = await storage.query_book("btcusdt", start, end, limit=50)
+        assert rows[0]["bids"] == [{"price": 100.0, "quantity": 1.0}]
+        assert rows[0]["asks"] == []
+        _, args = fake_pool.fetched[0]
+        assert args == ("btcusdt", start, end, 50)
+
     async def test_query_trades_passes_bounds_and_limit(self, storage, fake_pool):
         fake_pool.fetch_result = [{"symbol": "btcusdt", "price": 100.0}]
         start = datetime(2024, 1, 1, tzinfo=UTC)

@@ -18,6 +18,12 @@ per exchange and nothing else does:
 
 Adding a venue is therefore one small class implementing this protocol — no
 changes to the client, normalizer schema, or storage.
+
+L2 order-book DEPTH is an OPT-IN, separate capability captured by the
+:class:`DepthAdapter` protocol (mirroring :class:`ExchangeAdapter` but emitting
+:class:`~src.normalizer.BookUpdate` snapshots). It lives ALONGSIDE the trades
+adapter so the trades path is unchanged; an exchange that does not support depth
+simply has no depth adapter and the pipeline's depth feed stays off.
 """
 
 from __future__ import annotations
@@ -26,9 +32,27 @@ import logging
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
-from .normalizer import Trade
+from .normalizer import BookLevel, BookUpdate, Trade
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class ConnectionAdapter(Protocol):
+    """The URL + subscribe surface the WebSocket client needs.
+
+    Both :class:`ExchangeAdapter` (trades) and :class:`DepthAdapter` (L2 depth)
+    satisfy this, since the client only connects + subscribes — message PARSING
+    happens in the pipeline callback, not the client. Typing the client against
+    this narrower protocol lets it drive either feed without conflating their
+    parse methods (``normalize_trade`` vs ``normalize_depth``).
+    """
+
+    name: str
+
+    def ws_url(self, symbols: list[str]) -> str: ...
+
+    def subscribe_payload(self, symbols: list[str]) -> dict | None: ...
 
 
 @runtime_checkable
@@ -61,6 +85,39 @@ class ExchangeAdapter(Protocol):
         Most venues send JSON objects (``dict``); some (Kraken v1) send JSON
         arrays (``list``), so the raw message may be either. Returns ``None``
         for non-trade messages (heartbeats, subscription confirmations) and for
+        malformed payloads (logged, not raised).
+        """
+        ...
+
+
+@runtime_checkable
+class DepthAdapter(Protocol):
+    """Opt-in L2 order-book DEPTH capability, parallel to :class:`ExchangeAdapter`.
+
+    An exchange that supports a depth feed provides a class implementing this
+    protocol; the pipeline then runs a SECOND websocket connection for depth
+    alongside the trades feed. Venues without depth support simply have no
+    depth adapter and the depth feed stays off — the trades path is untouched
+    either way. The three things that vary per venue are the same as for trades
+    (URL, subscribe payload, message parsing), but parsing yields a normalized
+    :class:`~src.normalizer.BookUpdate` snapshot instead of a :class:`Trade`.
+    """
+
+    #: Stable lowercase identifier, also stamped onto each BookUpdate.
+    name: str
+
+    def ws_url(self, symbols: list[str]) -> str:
+        """Return the full depth WebSocket URL to connect to for ``symbols``."""
+        ...
+
+    def subscribe_payload(self, symbols: list[str]) -> dict | None:
+        """Return the JSON depth-subscribe message to send, or ``None``."""
+        ...
+
+    def normalize_depth(self, raw: dict | list) -> BookUpdate | None:
+        """Parse one raw WS message into a normalized :class:`BookUpdate`.
+
+        Returns ``None`` for non-depth messages (acks, heartbeats) and for
         malformed payloads (logged, not raised).
         """
         ...
@@ -422,11 +479,116 @@ class BitstampAdapter:
         return channel[len(prefix) :] if channel.startswith(prefix) else channel.lower()
 
 
+class BinanceDepthAdapter:
+    """Binance partial book depth stream ``<sym>@depth<N>@100ms`` (keyless public).
+
+    Chosen as the reference depth feed because it is the cleanest to consume:
+    Binance pushes a SELF-CONTAINED top-N snapshot every 100 ms, so there is no
+    diff/sequence-number bookkeeping or REST snapshot bootstrap to manage (unlike
+    Binance's incremental ``@depth`` diff stream or Coinbase ``level2``). Each
+    message already carries the full top-N book, which maps directly onto a
+    :class:`~src.normalizer.BookUpdate`.
+
+    URL form (streams embedded in the path, like the trades adapter, so no
+    subscribe message is sent)::
+
+        wss://stream.binance.com:9443/ws/<sym>@depth20@100ms/<sym>@depth20@100ms
+
+    Each raw partial-depth message looks like::
+
+        {"lastUpdateId": 160,
+         "bids": [["0.0024", "10"], ["0.0023", "5"], ...],   # [price, qty] strings
+         "asks": [["0.0026", "100"], ["0.0027", "20"], ...]}
+
+    Binance delivers ``bids`` highest-price-first and ``asks`` lowest-price-first
+    (best-first on both sides), which is exactly the :class:`BookUpdate`
+    ordering, so no re-sorting is needed. The partial-depth payload carries no
+    symbol field, so the configured single symbol is stamped on the snapshot;
+    for multi-symbol fan-out the combined-stream wrapper (``{"stream":
+    "btcusdt@depth20@100ms", "data": {...}}``) supplies the symbol from the
+    ``stream`` name. The partial-depth payload also carries no event time, so we
+    stamp it with ``datetime.now(UTC)`` at parse time (documented assumption:
+    the 100 ms cadence makes receive-time a faithful proxy for book time).
+    """
+
+    name = "binance"
+
+    def __init__(
+        self,
+        ws_base_url: str = "wss://stream.binance.com:9443/ws",
+        *,
+        levels: int = 20,
+    ) -> None:
+        self._ws_base_url = ws_base_url.rstrip("/")
+        self._levels = levels
+        # Symbol to stamp on the single-symbol /ws payload (no symbol field).
+        self._symbol_hint: str | None = None
+
+    def ws_url(self, symbols: list[str]) -> str:
+        # When more than one symbol is requested, use Binance's combined-stream
+        # endpoint so each message is wrapped with its originating stream name
+        # (the partial-depth payload itself has no symbol field). A single symbol
+        # keeps the raw /ws/<stream> form for the leanest possible connection.
+        streams = [f"{s}@depth{self._levels}@100ms" for s in symbols]
+        if len(streams) > 1:
+            base = self._ws_base_url.rsplit("/ws", 1)[0]
+            return f"{base}/stream?streams={'/'.join(streams)}"
+        return f"{self._ws_base_url}/{streams[0]}"
+
+    def subscribe_payload(self, symbols: list[str]) -> dict | None:
+        # Streams are embedded in the URL path; nothing to send.
+        return None
+
+    def normalize_depth(self, raw: dict | list) -> BookUpdate | None:
+        if not isinstance(raw, dict):
+            return None
+        # Combined-stream wrapper: {"stream": "btcusdt@depth20@100ms", "data": {...}}.
+        symbol: str | None = None
+        if "stream" in raw and "data" in raw:
+            symbol = str(raw["stream"]).split("@", 1)[0].lower()
+            raw = raw["data"]
+            if not isinstance(raw, dict):
+                return None
+        if "bids" not in raw or "asks" not in raw:
+            return None
+        try:
+            bids = [BookLevel(price=float(p), quantity=float(q)) for p, q in raw["bids"]]
+            asks = [BookLevel(price=float(p), quantity=float(q)) for p, q in raw["asks"]]
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning(f"Failed to normalize binance depth: {e}")
+            return None
+        return BookUpdate(
+            symbol=symbol or self._symbol_hint or "",
+            bids=bids,
+            asks=asks,
+            # Partial-depth payloads carry no event time; receive-time is a
+            # faithful proxy at the 100 ms push cadence.
+            timestamp=datetime.now(UTC),
+            exchange=self.name,
+        )
+
+    def with_symbol_hint(self, symbol: str) -> BinanceDepthAdapter:
+        """Return self after recording the symbol to stamp on un-wrapped payloads.
+
+        The single-symbol partial-depth payload has no symbol field, so the
+        pipeline tells the adapter which symbol the connection is for. The
+        multi-symbol combined-stream wrapper supplies the symbol itself and
+        ignores this hint.
+        """
+        self._symbol_hint = symbol.lower()
+        return self
+
+
 _ADAPTERS: dict[str, type] = {
     "binance": BinanceAdapter,
     "coinbase": CoinbaseAdapter,
     "kraken": KrakenAdapter,
     "bitstamp": BitstampAdapter,
+}
+
+#: Exchanges that ship an opt-in L2 depth adapter. Others have no depth feed.
+_DEPTH_ADAPTERS: dict[str, type] = {
+    "binance": BinanceDepthAdapter,
 }
 
 
@@ -441,4 +603,24 @@ def build_adapter(exchange: str) -> ExchangeAdapter:
     if cls is None:
         known = ", ".join(sorted(_ADAPTERS))
         raise ValueError(f"Unknown EXCHANGE {exchange!r}; expected one of: {known}.")
+    return cls()
+
+
+def supports_depth(exchange: str) -> bool:
+    """Whether ``exchange`` ships an opt-in L2 depth adapter."""
+    return exchange.lower() in _DEPTH_ADAPTERS
+
+
+def build_depth_adapter(exchange: str) -> DepthAdapter:
+    """Construct the :class:`DepthAdapter` for ``exchange`` (opt-in depth feed).
+
+    Raises :class:`ValueError` if the exchange has no depth adapter (callers
+    should gate on :func:`supports_depth` first). Adding depth for another venue
+    is one class implementing :class:`DepthAdapter` plus an entry here.
+    """
+    key = exchange.lower()
+    cls = _DEPTH_ADAPTERS.get(key)
+    if cls is None:
+        known = ", ".join(sorted(_DEPTH_ADAPTERS)) or "(none)"
+        raise ValueError(f"Exchange {exchange!r} has no L2 depth adapter; depth-capable: {known}.")
     return cls()

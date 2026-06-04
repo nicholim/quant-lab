@@ -54,6 +54,21 @@ class RedisCache:
         raw = await self._client.lrange(key, 0, count - 1)
         return [json.loads(item) for item in raw]
 
+    async def set_book(self, symbol: str, book_data: dict) -> None:
+        """Cache the latest L2 depth snapshot for a symbol (opt-in depth feed).
+
+        Stored as a single JSON blob under ``book:<symbol>`` so a consumer can
+        fetch the current top-of-book without replaying the stream.
+        """
+        assert self._client is not None, "connect() must be called first"
+        await self._client.set(f"book:{symbol}", json.dumps(book_data, default=str))
+
+    async def get_book(self, symbol: str) -> dict | None:
+        """Retrieve the latest cached L2 depth snapshot for a symbol."""
+        assert self._client is not None, "connect() must be called first"
+        raw = await self._client.get(f"book:{symbol}")
+        return json.loads(raw) if raw else None
+
     async def publish(self, channel: str, message: dict) -> None:
         """Publish a message to a Redis pub/sub channel."""
         assert self._client is not None, "connect() must be called first"

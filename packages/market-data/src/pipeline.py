@@ -4,7 +4,15 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict
 from datetime import datetime, timedelta
 
-from .adapters import BinanceAdapter, ExchangeAdapter, build_adapter
+from .adapters import (
+    BinanceAdapter,
+    BinanceDepthAdapter,
+    DepthAdapter,
+    ExchangeAdapter,
+    build_adapter,
+    build_depth_adapter,
+    supports_depth,
+)
 from .cache import RedisCache
 from .config import Config
 from .normalizer import TickNormalizer
@@ -26,6 +34,25 @@ def build_exchange_adapter(config: Config) -> ExchangeAdapter:
     if config.exchange == "binance":
         return BinanceAdapter(config.ws_url)
     return build_adapter(config.exchange)
+
+
+def build_depth_adapter_for(config: Config) -> DepthAdapter | None:
+    """Select the opt-in L2 depth adapter from config, or ``None``.
+
+    Returns ``None`` (depth feed off) unless ``ENABLE_DEPTH`` is set AND the
+    selected exchange ships a depth adapter. Binance is built from ``WS_URL`` so
+    the depth stream uses the same host as the trades stream; a single-symbol
+    Binance connection is given the symbol hint (its partial-depth payload has
+    no symbol field).
+    """
+    if not config.enable_depth or not supports_depth(config.exchange):
+        return None
+    if config.exchange == "binance":
+        adapter = BinanceDepthAdapter(config.ws_url)
+        if len(config.symbols) == 1:
+            adapter.with_symbol_hint(config.symbols[0])
+        return adapter
+    return build_depth_adapter(config.exchange)
 
 
 def build_storage(config: Config) -> StorageBackend:
@@ -53,12 +80,20 @@ class Pipeline:
         self.config = config
         self.adapter: ExchangeAdapter = build_exchange_adapter(config)
         self.client = MarketDataClient(config.ws_url, adapter=self.adapter)
-        self.normalizer = TickNormalizer(self.adapter)
+        # OPT-IN L2 depth feed: a SECOND adapter + websocket connection, only
+        # built when ENABLE_DEPTH is set and the exchange supports depth. When
+        # off (the default) the depth attributes are None and nothing changes.
+        self.depth_adapter: DepthAdapter | None = build_depth_adapter_for(config)
+        self.normalizer = TickNormalizer(self.adapter, self.depth_adapter)
+        self.depth_client: MarketDataClient | None = None
+        if self.depth_adapter is not None:
+            self.depth_client = MarketDataClient(config.ws_url, adapter=self.depth_adapter)
         self.cache = RedisCache(config.redis_url)
         self.storage: StorageBackend = build_storage(config)
 
         self._trade_buffer: list[dict] = []
         self._flush_task: asyncio.Task | None = None
+        self._depth_task: asyncio.Task | None = None
         self._running = False
         # Backpressure accounting: how many trades we were forced to drop
         # because the sink stayed unreachable while the buffer was at its cap.
@@ -114,6 +149,12 @@ class Pipeline:
         self.client.on_message(self._on_message)
         self._flush_task = asyncio.create_task(self._periodic_flush())
 
+        # OPT-IN depth: run the second connection concurrently with trades.
+        if self.depth_client is not None:
+            logger.info("L2 depth feed enabled for symbols: %s", self.config.symbols)
+            self.depth_client.on_message(self._on_depth_message)
+            self._depth_task = asyncio.create_task(self.depth_client.connect(self.config.symbols))
+
         await self.client.connect(self.config.symbols)
 
     async def stop(self) -> None:
@@ -122,6 +163,16 @@ class Pipeline:
         logger.info("Stopping pipeline...")
 
         await self.client.disconnect()
+
+        # Tear down the opt-in depth connection (if running) alongside trades.
+        if self.depth_client is not None:
+            await self.depth_client.disconnect()
+        if self._depth_task is not None:
+            self._depth_task.cancel()
+            try:
+                await self._depth_task
+            except asyncio.CancelledError:
+                pass
 
         # Emit any final in-progress OHLCV bars before we tear down storage:
         # the last minute of each symbol is never closed by a later trade, so
@@ -182,6 +233,30 @@ class Pipeline:
             logger.debug(
                 f"OHLCV bar: {bar.symbol} O={bar.open} H={bar.high} L={bar.low} C={bar.close}"
             )
+
+    async def _on_depth_message(self, raw: dict | list) -> None:
+        """Process an incoming L2 depth message (opt-in depth feed).
+
+        Mirrors :meth:`_on_message` for the book: normalize -> cache the latest
+        snapshot -> publish on ``book:<symbol>`` -> persist the snapshot. Depth
+        snapshots are persisted one-at-a-time (each is a self-contained top-N
+        book, low cardinality at the 100 ms cadence) rather than batch-buffered
+        like trades, keeping this path independent of the trade buffer /
+        backpressure machinery.
+        """
+        book = self.normalizer.normalize_depth(raw)
+        if book is None:
+            return
+
+        book_dict = asdict(book)
+        book_dict["timestamp"] = book.timestamp
+
+        await self.cache.set_book(book.symbol, book_dict)
+        await self.cache.publish(f"book:{book.symbol}", book_dict)
+        try:
+            await self.storage.insert_book(book_dict)
+        except Exception as e:  # noqa: BLE001 - best-effort; don't kill the feed
+            logger.error(f"Failed to persist depth snapshot for {book.symbol}: {e}")
 
     async def _flush_trades(self) -> None:
         """Flush buffered trades to storage."""

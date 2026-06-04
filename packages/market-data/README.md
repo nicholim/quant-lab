@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~98%25-brightgreen.svg)](pyproject.toml)
 
 > An asyncio daemon that streams exchange trades over WebSocket (Binance, Coinbase, Kraken, or
@@ -69,6 +69,17 @@ graph LR
   (default), **Coinbase**, **Kraken**, and **Bitstamp**; select with `EXCHANGE=binance|coinbase|kraken|bitstamp`
   or the `--exchange` CLI flag. Adding a venue is one small class — the client, normalizer schema, and
   storage are untouched
+- **L2 order-book depth (opt-in)** — alongside the trades feed, an optional `DepthAdapter` protocol
+  (`src/adapters.py`) streams normalized L2 book snapshots (`BookUpdate` = best-first bids/asks +
+  symbol + timestamp) over a **second** WebSocket connection. Ships a `BinanceDepthAdapter`
+  (`<sym>@depth20@100ms` partial-book stream — self-contained top-N snapshots, no diff/sequence
+  bookkeeping). Enable with `ENABLE_DEPTH=1` or `--enable-depth`. **Off by default**, so the
+  trades-only pipeline is byte-identical; depth snapshots are cached (`book:<symbol>`), published, and
+  persisted to a `book` table additively (bids/asks as JSON), reusing the same `StorageBackend`
+- **Multi-symbol fan-out** — one connection subscribes to multiple symbols where the venue supports it
+  (Binance combined-stream URL, Coinbase/Kraken subscribe lists); set `SYMBOLS=btcusdt,ethusdt,...` or
+  `--symbols`. Each symbol routes to its own cache key / OHLCV accumulator. A single configured symbol
+  is byte-identical to the prior single-symbol behavior
 - **Tick Normalization** — Standardize raw trade messages into typed `Trade` dataclass
 - **OHLCV Aggregation** — Real-time candlestick bar construction from tick-level data; a single-trade
   minute still produces a valid bar and the final in-progress bar is flushed on shutdown (`flush_all()`)
@@ -170,7 +181,8 @@ python main.py --exchange kraken --symbols btcusd,ethusd
 | `DUCKDB_PATH` | `data/marketdata.duckdb` | Local DuckDB file path (used when `STORAGE_BACKEND=duckdb`) |
 | `EXCHANGE` | `binance` | Exchange adapter: `binance` (URL-embedded `@trade` streams), `coinbase` (`matches` feed), `kraken` (v1 `trade` feed), or `bitstamp` (`live_trades` channel). Overridable per-run with `--exchange` |
 | `WS_URL` | `wss://stream.binance.com:9443/ws` | WebSocket endpoint (used by the Binance adapter; Coinbase/Kraken/Bitstamp use their own fixed feeds) |
-| `SYMBOLS` | `btcusdt,ethusdt` | Comma-separated trading pairs (Coinbase/Bitstamp: `btcusd`; Kraken auto-maps `btcusd` → `XBT/USD`) |
+| `SYMBOLS` | `btcusdt,ethusdt` | Comma-separated trading pairs fanned out over ONE connection where the venue supports it (Coinbase/Bitstamp: `btcusd`; Kraken auto-maps `btcusd` → `XBT/USD`). Overridable per-run with `--symbols` |
+| `ENABLE_DEPTH` | _(off)_ | Set `1`/`true`/`yes` to also stream the L2 order-book **depth** feed over a second connection (opt-in; depth-capable venues only — currently `binance`). Overridable per-run with `--enable-depth` |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `BATCH_SIZE` | `100` | Trades buffered before a batch DB insert |
 | `FLUSH_INTERVAL_SECONDS` | `5` | Max seconds between DB flushes |
@@ -234,6 +246,33 @@ client, normalizer schema, and storage never change. `EXCHANGE` (default `binanc
   python main.py --exchange bitstamp --symbols btcusd
   ```
 
+### L2 order-book depth (opt-in, alongside trades)
+
+Depth is a **separate, opt-in capability** captured by a `DepthAdapter` protocol (`src/adapters.py`),
+parallel to `ExchangeAdapter` but parsing into a normalized `BookUpdate` (best-first `bids`/`asks`
+levels + symbol + timestamp) instead of a `Trade`. When enabled, the pipeline runs a **second**
+WebSocket connection for depth alongside the trades feed; the trades path is completely unchanged
+whether depth is on or off (default off ⇒ byte-identical to before).
+
+- **`binance`** — `BinanceDepthAdapter`: the `<sym>@depth20@100ms` **partial book** stream. Chosen as
+  the reference depth feed because each message is a self-contained top-N snapshot
+  (`{"lastUpdateId":…,"bids":[["price","qty"],…],"asks":[…]}`), so there is no diff/sequence-number
+  bookkeeping or REST snapshot bootstrap (unlike the incremental `@depth` diff stream or Coinbase
+  `level2`). Binance delivers bids best-first (highest) and asks best-first (lowest), matching the
+  `BookUpdate` ordering. Single-symbol uses the lean `/ws/<stream>` form (with the configured symbol
+  stamped, since the payload carries none); multi-symbol uses the combined-stream endpoint
+  (`/stream?streams=…`) whose `{"stream":"…","data":{…}}` wrapper supplies the symbol. Receive-time is
+  stamped as the snapshot timestamp (the payload has no event time; faithful at the 100 ms cadence).
+
+Each snapshot is cached at `book:<symbol>` (latest), published on the `book:<symbol>` channel, and
+persisted to an additive `book` table (`time, symbol, bids, asks, exchange`; bids/asks stored as JSON)
+on whichever `StorageBackend` is selected. Venues without a depth adapter simply have no depth feed.
+
+```bash
+ENABLE_DEPTH=1 python main.py --symbols btcusdt,ethusdt   # trades + L2 depth, two symbols
+python main.py --enable-depth --symbols btcusdt           # equivalently via the CLI flag
+```
+
 ## Usage
 
 ```python
@@ -288,7 +327,7 @@ library or a standalone database engine.
 |---|---|---|---|---|
 | What it is | Streaming ingest + storage daemon | Crypto WS feed handler library | Unified exchange WS/REST client | DataFrame time-series store |
 | Exchanges | Binance + Coinbase + Kraken + Bitstamp, pluggable adapter | 40+ exchanges, many channels | 100+ exchanges (unified API) | N/A (storage only) |
-| Channels | Trades → 1m OHLCV | trades, L2/L3 book, ticker, funding, … | trades, book, ticker, OHLCV, orders | N/A |
+| Channels | Trades → 1m OHLCV + opt-in **L2 depth** (Binance) | trades, L2/L3 book, ticker, funding, … | trades, book, ticker, OHLCV, orders | N/A |
 | Persistence | Built-in, pluggable: Redis cache + TimescaleDB or local DuckDB | Pluggable backends (Redis, Mongo, Kafka, …) | None (you write your own) | Its core job (S3/LMDB, versioned) |
 | Replay / research feeder | Yes (`Pipeline.replay()` over the store) | No | No | Read API (it is the store) |
 | Ready to run? | Yes — `python main.py` (zero infra with `STORAGE_BACKEND=duckdb`) | Library; you write the handler | Library; you write the loop | Library; you write read/write code |
@@ -298,10 +337,11 @@ library or a standalone database engine.
 reconnect, typed normalization, batched writes that survive a flush failure, and a TimescaleDB
 schema with hypertables and per-symbol indexes already wired up.
 
-**What it intentionally does *not* do:** no order books / ticker / funding channels, no order
-placement, and only the trade-stream shape (one channel) on the four adapters it ships (Binance,
-Coinbase, Kraken, Bitstamp) — not cryptofeed's 40+ venues or many channels. It is not a database engine — Timescale
-or DuckDB does the storage, ArcticDB-style versioning/time-travel is out of scope.
+**What it intentionally does *not* do:** no ticker / funding channels, no order placement, and — apart
+from the opt-in Binance L2 **depth** feed — only the trade-stream shape on the four adapters it ships
+(Binance, Coinbase, Kraken, Bitstamp), not cryptofeed's 40+ venues or its full channel set (L3 book,
+funding, liquidations, …). It is not a database engine — Timescale or DuckDB does the storage,
+ArcticDB-style versioning/time-travel is out of scope.
 
 **Who it's for:** someone who wants their own durable trade + OHLCV store from a crypto stream and
 prefers a small, readable codebase they can extend over adopting a large feed-handler framework. If
@@ -319,7 +359,7 @@ market-data-pipeline/
 ├── requirements.txt
 └── src/
     ├── config.py             # Dataclass-based config from env vars
-    ├── adapters.py           # ExchangeAdapter protocol + Binance/Coinbase/Kraken/Bitstamp adapters
+    ├── adapters.py           # ExchangeAdapter (trades) + DepthAdapter (L2) protocols + adapters
     ├── websocket_client.py   # Async WS client with auto-reconnect (driven by an adapter)
     ├── normalizer.py         # Trade/OHLCV normalization (parsing delegated to the adapter)
     ├── cache.py              # Redis caching layer (prices, trades, pub/sub)
@@ -418,7 +458,7 @@ retry budget (see `websocket_client.py`), so transient stream drops do not kill 
 pip install -r requirements.txt
 ruff check .      # lint
 mypy              # type-check (gradual)
-pytest            # 222 tests, ~98% coverage; gate --cov-fail-under=85
+pytest            # 273 tests, ~98% coverage; gate --cov-fail-under=85
 ```
 
 The test suite uses in-memory fakes (`FakeWebSocket` / `FakeRedis` / `FakePool` in

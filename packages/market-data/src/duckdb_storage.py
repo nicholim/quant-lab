@@ -22,6 +22,7 @@ exported to Parquet via :meth:`export_parquet` for downstream research tooling.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
@@ -52,12 +53,24 @@ CREATE TABLE IF NOT EXISTS ohlcv (
     interval    VARCHAR     NOT NULL DEFAULT '1m'
 );
 
+CREATE TABLE IF NOT EXISTS book (
+    time        TIMESTAMPTZ NOT NULL,
+    symbol      VARCHAR     NOT NULL,
+    bids        VARCHAR     NOT NULL,
+    asks        VARCHAR     NOT NULL,
+    exchange    VARCHAR     NOT NULL DEFAULT 'binance'
+);
+
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_time ON trades (symbol, "time");
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_time ON ohlcv (symbol, "time");
+CREATE INDEX IF NOT EXISTS idx_book_symbol_time ON book (symbol, "time");
 """
 
 _TRADE_COLUMNS = ("time", "symbol", "price", "quantity", "side", "exchange")
 _OHLCV_COLUMNS = ("time", "symbol", "open", "high", "low", "close", "volume", "trade_count")
+# L2 depth: bids/asks are stored as JSON strings (a wide row per snapshot) and
+# decoded back to lists of {"price","quantity"} dicts on read.
+_BOOK_COLUMNS = ("time", "symbol", "bids", "asks", "exchange")
 
 
 class DuckDBStorage:
@@ -126,6 +139,37 @@ class DuckDBStorage:
         )
         await asyncio.to_thread(self._execute_ohlcv, conn, row)
 
+    async def insert_book(self, book: dict) -> None:
+        conn = self._require_conn()
+        row = (
+            book["timestamp"],
+            book["symbol"],
+            json.dumps(book["bids"]),
+            json.dumps(book["asks"]),
+            book["exchange"],
+        )
+        await asyncio.to_thread(self._execute_book, conn, row)
+
+    async def query_book(
+        self, symbol: str, start: datetime, end: datetime, limit: int = 10000
+    ) -> list[dict]:
+        conn = self._require_conn()
+        sql = """
+            SELECT time, symbol, bids, asks, exchange
+            FROM book
+            WHERE symbol = ? AND time >= ? AND time < ?
+            ORDER BY time DESC
+            LIMIT ?
+        """
+        records = await asyncio.to_thread(self._fetch, conn, sql, [symbol, start, end, limit])
+        out: list[dict] = []
+        for r in records:
+            d = dict(zip(_BOOK_COLUMNS, r, strict=True))
+            d["bids"] = json.loads(d["bids"])
+            d["asks"] = json.loads(d["asks"])
+            out.append(d)
+        return out
+
     async def query_trades(
         self, symbol: str, start: datetime, end: datetime, limit: int = 10000
     ) -> list[dict]:
@@ -164,6 +208,7 @@ class DuckDBStorage:
         paths = {
             "trades": os.path.join(output_dir, "trades.parquet"),
             "ohlcv": os.path.join(output_dir, "ohlcv.parquet"),
+            "book": os.path.join(output_dir, "book.parquet"),
         }
         await asyncio.to_thread(self._export_parquet, conn, paths)
         logger.info("Exported DuckDB tables to Parquet in %s", output_dir)
@@ -185,6 +230,13 @@ class DuckDBStorage:
             "INSERT INTO ohlcv "
             "(time, symbol, open, high, low, close, volume, trade_count, interval) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            row,
+        )
+
+    @staticmethod
+    def _execute_book(conn: duckdb.DuckDBPyConnection, row: tuple) -> None:
+        conn.execute(
+            "INSERT INTO book (time, symbol, bids, asks, exchange) VALUES (?, ?, ?, ?, ?)",
             row,
         )
 

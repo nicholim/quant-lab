@@ -8,7 +8,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
-from .adapters import BinanceAdapter, ExchangeAdapter
+from .adapters import BinanceAdapter, ConnectionAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +26,15 @@ class MarketDataClient:
         self,
         ws_url: str,
         max_retries: int = 10,
-        adapter: ExchangeAdapter | None = None,
+        adapter: ConnectionAdapter | None = None,
     ):
         self.ws_url = ws_url
         self.max_retries = max_retries
-        # The adapter decides the per-exchange URL + subscribe payload. Default
-        # to Binance built from ``ws_url`` so callers that don't pass one (and
-        # the existing tests) behave exactly as before.
-        self.adapter: ExchangeAdapter = adapter or BinanceAdapter(ws_url)
+        # The adapter decides the per-exchange URL + subscribe payload (the
+        # narrower ConnectionAdapter surface; a trades OR a depth adapter both
+        # satisfy it). Default to Binance built from ``ws_url`` so callers that
+        # don't pass one (and the existing tests) behave exactly as before.
+        self.adapter: ConnectionAdapter = adapter or BinanceAdapter(ws_url)
         self._ws: ClientConnection | None = None
         self._callbacks: list[Callable[[dict | list], Awaitable[None]]] = []
         self._running = False

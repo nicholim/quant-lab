@@ -228,4 +228,6 @@ class TestPersistenceAndExport:
         paths = await storage.export_parquet(str(out))
         assert (out / "trades.parquet").exists()
         assert (out / "ohlcv.parquet").exists()
-        assert set(paths) == {"trades", "ohlcv"}
+        # The L2 depth `book` table is also exported (empty here, but written).
+        assert (out / "book.parquet").exists()
+        assert set(paths) == {"trades", "ohlcv", "book"}

@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 
@@ -31,8 +32,19 @@ CREATE TABLE IF NOT EXISTS ohlcv (
 
 SELECT create_hypertable('ohlcv', 'time', if_not_exists => TRUE);
 
+CREATE TABLE IF NOT EXISTS book (
+    time        TIMESTAMPTZ NOT NULL,
+    symbol      TEXT        NOT NULL,
+    bids        JSONB       NOT NULL,
+    asks        JSONB       NOT NULL,
+    exchange    TEXT        NOT NULL DEFAULT 'binance'
+);
+
+SELECT create_hypertable('book', 'time', if_not_exists => TRUE);
+
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_time ON trades (symbol, time DESC);
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_time ON ohlcv (symbol, time DESC);
+CREATE INDEX IF NOT EXISTS idx_book_symbol_time ON book (symbol, time DESC);
 """
 
 
@@ -104,6 +116,52 @@ class TimeSeriesStorage:
                 bar["trade_count"],
                 bar["interval"],
             )
+
+    async def insert_book(self, book: dict) -> None:
+        """Insert a single L2 depth snapshot (bids/asks stored as JSONB)."""
+        assert self._pool is not None, "connect() must be called first"
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO book (time, symbol, bids, asks, exchange)
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                book["timestamp"],
+                book["symbol"],
+                json.dumps(book["bids"]),
+                json.dumps(book["asks"]),
+                book["exchange"],
+            )
+
+    async def query_book(
+        self, symbol: str, start: datetime, end: datetime, limit: int = 10000
+    ) -> list[dict]:
+        """Query L2 depth snapshots within a time range (most recent first)."""
+        assert self._pool is not None, "connect() must be called first"
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT time, symbol, bids, asks, exchange
+                FROM book
+                WHERE symbol = $1 AND time >= $2 AND time < $3
+                ORDER BY time DESC
+                LIMIT $4
+                """,
+                symbol,
+                start,
+                end,
+                limit,
+            )
+            out: list[dict] = []
+            for r in rows:
+                d = dict(r)
+                # asyncpg returns JSONB as a str; decode to lists of level dicts.
+                if isinstance(d.get("bids"), str):
+                    d["bids"] = json.loads(d["bids"])
+                if isinstance(d.get("asks"), str):
+                    d["asks"] = json.loads(d["asks"])
+                out.append(d)
+            return out
 
     async def query_trades(
         self, symbol: str, start: datetime, end: datetime, limit: int = 10000

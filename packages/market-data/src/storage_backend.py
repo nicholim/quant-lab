@@ -13,6 +13,7 @@ Both implementations expose the identical normalized schema:
 
 * ``trades``: ``time, symbol, price, quantity, side, exchange``
 * ``ohlcv``:  ``time, symbol, open, high, low, close, volume, trade_count, interval``
+* ``book``:   ``time, symbol, bids, asks, exchange`` (L2 depth; bids/asks JSON)
 """
 
 from __future__ import annotations
@@ -47,6 +48,21 @@ class StorageBackend(Protocol):
 
     async def insert_ohlcv(self, bar: dict) -> None:
         """Persist a single normalized OHLCV bar dict."""
+
+    async def insert_book(self, book: dict) -> None:
+        """Persist a single normalized L2 depth snapshot dict.
+
+        The dict keys are ``timestamp, symbol, bids, asks, exchange`` where
+        ``bids``/``asks`` are lists of ``{"price", "quantity"}`` dicts (as
+        produced from a :class:`~src.normalizer.BookUpdate` via ``asdict``).
+        OPT-IN: only exercised when a depth feed is enabled; backends store the
+        levels as JSON so the schema stays a single wide row per snapshot.
+        """
+
+    async def query_book(
+        self, symbol: str, start: datetime, end: datetime, limit: int = 10000
+    ) -> list[dict]:
+        """Read L2 depth snapshots for ``symbol`` in ``[start, end)`` (most recent first)."""
 
     async def query_trades(
         self, symbol: str, start: datetime, end: datetime, limit: int = 10000

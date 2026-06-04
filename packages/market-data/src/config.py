@@ -69,3 +69,10 @@ class Config:
     duckdb_path: str = field(
         default_factory=lambda: os.getenv("DUCKDB_PATH", "data/marketdata.duckdb")
     )
+    # OPT-IN L2 order-book DEPTH feed, alongside the trades feed (default OFF so
+    # the trades-only pipeline is byte-identical). Set ENABLE_DEPTH=1/true/yes to
+    # also stream depth snapshots over a SECOND websocket connection. Only takes
+    # effect when the selected exchange ships a depth adapter (see adapters.py).
+    enable_depth: bool = field(
+        default_factory=lambda: os.getenv("ENABLE_DEPTH", "").lower() in ("1", "true", "yes", "on")
+    )

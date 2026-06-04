@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .adapters import ExchangeAdapter
+    from .adapters import DepthAdapter, ExchangeAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,43 @@ class Trade:
     side: str  # "buy" or "sell"
     timestamp: datetime
     exchange: str = "binance"
+
+
+@dataclass
+class BookLevel:
+    """One side-level of an order book: a price and the aggregate size resting there."""
+
+    price: float
+    quantity: float
+
+
+@dataclass
+class BookUpdate:
+    """A normalized L2 order-book snapshot (top-N price levels per side).
+
+    This is the depth analogue of :class:`Trade`. ``bids`` are sorted
+    best-first (highest price first) and ``asks`` best-first (lowest price
+    first), matching how exchanges deliver a partial-book/depth snapshot. The
+    pipeline consumes these the same way it consumes :class:`Trade`s — cache,
+    publish, and persist — but on a separate path so the trades feed is
+    completely unaffected.
+    """
+
+    symbol: str
+    bids: list[BookLevel]
+    asks: list[BookLevel]
+    timestamp: datetime
+    exchange: str = "binance"
+
+    @property
+    def best_bid(self) -> float | None:
+        """Highest bid price, or ``None`` if there are no bids."""
+        return self.bids[0].price if self.bids else None
+
+    @property
+    def best_ask(self) -> float | None:
+        """Lowest ask price, or ``None`` if there are no asks."""
+        return self.asks[0].price if self.asks else None
 
 
 @dataclass
@@ -45,7 +82,11 @@ class TickNormalizer:
     ``TickNormalizer()`` parses Binance trades exactly as before.
     """
 
-    def __init__(self, adapter: ExchangeAdapter | None = None) -> None:
+    def __init__(
+        self,
+        adapter: ExchangeAdapter | None = None,
+        depth_adapter: DepthAdapter | None = None,
+    ) -> None:
         if adapter is None:
             # Imported here to avoid a module-level import cycle (adapters
             # imports Trade from this module).
@@ -53,11 +94,23 @@ class TickNormalizer:
 
             adapter = BinanceAdapter()
         self.adapter: ExchangeAdapter = adapter
+        # OPT-IN: only set when a depth feed is enabled. Default ``None`` keeps
+        # the trades-only behavior byte-identical.
+        self.depth_adapter: DepthAdapter | None = depth_adapter
         self._bar_accumulators: dict[str, list[Trade]] = defaultdict(list)
 
     def normalize_trade(self, raw: dict | list) -> Trade | None:
         """Normalize a raw exchange message into a Trade via the adapter."""
         return self.adapter.normalize_trade(raw)
+
+    def normalize_depth(self, raw: dict | list) -> BookUpdate | None:
+        """Normalize a raw exchange message into a BookUpdate via the depth adapter.
+
+        Returns ``None`` when no depth adapter is configured (depth feed off).
+        """
+        if self.depth_adapter is None:
+            return None
+        return self.depth_adapter.normalize_depth(raw)
 
     def accumulate_trade(self, trade: Trade) -> OHLCVBar | None:
         """Accumulate trades and emit a 1-minute OHLCV bar when the minute rolls over.

@@ -65,6 +65,39 @@ class TestExchangeFlag:
         assert cfg.symbols == ["btcusd", "ethusd"]
 
 
+class TestDepthFlag:
+    def test_default_no_depth_flag_keeps_depth_off(self, monkeypatch):
+        monkeypatch.delenv("ENABLE_DEPTH", raising=False)
+        args = cli_main.build_parser().parse_args([])
+        assert args.enable_depth is False
+        cfg = cli_main.build_config(args)
+        # Default: trades only, byte-identical to before.
+        assert cfg.enable_depth is False
+
+    def test_enable_depth_flag_turns_depth_on(self, monkeypatch):
+        monkeypatch.delenv("ENABLE_DEPTH", raising=False)
+        args = cli_main.build_parser().parse_args(["--enable-depth"])
+        cfg = cli_main.build_config(args)
+        assert cfg.enable_depth is True
+
+    def test_enable_depth_env_var_parsing(self, monkeypatch):
+        for truthy in ("1", "true", "TRUE", "yes", "on"):
+            monkeypatch.setenv("ENABLE_DEPTH", truthy)
+            assert Config().enable_depth is True
+        for falsy in ("0", "false", "no", "", "off"):
+            monkeypatch.setenv("ENABLE_DEPTH", falsy)
+            assert Config().enable_depth is False
+
+    def test_multi_symbol_fanout_from_cli(self, monkeypatch):
+        monkeypatch.delenv("SYMBOLS", raising=False)
+        args = cli_main.build_parser().parse_args(
+            ["--symbols", "btcusdt,ethusdt,solusdt", "--enable-depth"]
+        )
+        cfg = cli_main.build_config(args)
+        assert cfg.symbols == ["btcusdt", "ethusdt", "solusdt"]
+        assert cfg.enable_depth is True
+
+
 class TestDotenv:
     @pytest.fixture(autouse=True)
     def _isolate_dotenv(self, monkeypatch):
