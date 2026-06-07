@@ -83,68 +83,15 @@ services:
       # deterministic by construction. (The library/CLI still honor
       # PORTFOLIO_OFFLINE=1 for their own yfinance fetches; not relevant here.)
 
-  # ---- Market data ingestion daemon (Docker background worker) ----
-  # DEFAULT deploy needs NO external database: STORAGE_BACKEND=duckdb writes the
-  # normalized trades/ohlcv to a local DuckDB file on disk, so the worker runs on
-  # just managed Redis (wired below) + the container's writable disk. NOTE: on
-  # the free plan that disk is EPHEMERAL — fine for a live-streaming demo, but
-  # data is lost on redeploy/restart. For durable storage either attach a Render
-  # persistent disk, or switch to Timescale by setting STORAGE_BACKEND=timescale
-  # and DATABASE_URL (kept below as an optional sync:false secret).
-  # dockerfilePath is relative to rootDir.
-  - type: worker
-    name: market-data-pipeline
-    runtime: docker
-    plan: free
-    rootDir: packages/market-data
-    branch: main
-    dockerfilePath: ./Dockerfile
-    autoDeploy: false
-    envVars:
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: market-data-cache
-          property: connectionString
-      # No-external-DB default: persist ticks/bars to a local DuckDB file.
-      - key: STORAGE_BACKEND
-        value: duckdb
-      # DuckDB file path (under the working dir; ephemeral on the free plan).
-      - key: DUCKDB_PATH
-        value: data/marketdata.duckdb
-      # OPTIONAL — only used if you switch STORAGE_BACKEND to "timescale".
-      # Leave UNSET for the default DuckDB demo. To use Timescale, set
-      # STORAGE_BACKEND=timescale and paste an external TimescaleDB URL here
-      # (Timescale Cloud / Aiven; Render's managed Postgres lacks the extension).
-      - key: DATABASE_URL
-        sync: false
-      # Exchange adapter: "binance" (default, keyless) or "coinbase".
-      - key: EXCHANGE
-        value: binance
-      - key: WS_URL
-        value: wss://stream.binance.com:9443/ws
-      - key: SYMBOLS
-        value: btcusdt,ethusdt,solusdt
-      - key: LOG_LEVEL
-        value: INFO
-      - key: BATCH_SIZE
-        value: "100"
-      - key: FLUSH_INTERVAL_SECONDS
-        value: "5"
-      # Backpressure cap on the in-memory trade buffer (>= BATCH_SIZE).
-      - key: MAX_BUFFER_SIZE
-        value: "1000"
-
-  # ---- Managed Redis-compatible cache (Key Value) ----
-  # Render's Blueprint schema declares Key Value instances INSIDE `services`
-  # with `type: keyvalue` (the top-level `keyValue:` block is not valid). The
-  # market-data worker reads its connectionString via the `fromService`
-  # reference above. `ipAllowList` is REQUIRED; 0.0.0.0/0 lets the worker (and
-  # your own redis-cli) reach it — tighten if you don't need external access.
-  - type: keyvalue
-    name: market-data-cache
-    plan: free
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: allow all
-    maxmemoryPolicy: allkeys-lru
+  # ---- Market data ingestion daemon + Key Value cache — DISABLED on the free plan ----
+  # Render's FREE plan does not offer Background Workers or Key Value (Redis):
+  # the Blueprint apply reports "service type is not available for this plan".
+  # The market-data worker is a HEADLESS daemon with NO public web UI (the
+  # showcase marks it liveDemo:false), so omitting it costs the visible demo
+  # nothing — the three Web Services above are the live demos.
+  #
+  # TO RUN IT: upgrade to a paid Render plan and restore the `worker` +
+  # `keyvalue` service blocks from git history (they were present through commit
+  # cc3b530 — `git show cc3b530:render.yaml`). The worker defaults to
+  # STORAGE_BACKEND=duckdb, so it needs only the Key Value instance + disk; no
+  # external database is required.
