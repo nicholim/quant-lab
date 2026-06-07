@@ -135,6 +135,16 @@ services:
       - key: MAX_BUFFER_SIZE
         value: "1000"
 
-keyValue:
-  - name: market-data-cache
+  # ---- Managed Redis-compatible cache (Key Value) ----
+  # Render's Blueprint schema declares Key Value instances INSIDE `services`
+  # with `type: keyvalue` (the top-level `keyValue:` block is not valid). The
+  # market-data worker reads its connectionString via the `fromService`
+  # reference above. `ipAllowList` is REQUIRED; 0.0.0.0/0 lets the worker (and
+  # your own redis-cli) reach it — tighten if you don't need external access.
+  - type: keyvalue
+    name: market-data-cache
     plan: free
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: allow all
+    maxmemoryPolicy: allkeys-lru
