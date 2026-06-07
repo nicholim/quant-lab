@@ -17,7 +17,10 @@ the standing rules. Keep it accurate — agents trust it instead of re-discoveri
 
 > Theme the user is driving: **make the monorepo feel production / POC, not educational** —
 > wire REAL live market data (free sources) into the apps and harden them for cloud deploy.
-> All work goes on the `feature/agent-improvements` branch (off `main`); never push.
+> **Branch model changed 2026-06-07:** all prior work was merged to `main` and
+> `feature/agent-improvements` was deleted (local + remote). `main` is now the source of truth and IS pushed
+> to `origin` (GitHub `nicholim/quant-lab`). For the NEXT pass, branch fresh off `main`
+> (e.g. `git checkout -b feature/<thing>`) and still **never push without the user's explicit go-ahead.**
 
 **Done (2026-06-02): ENTIRE P0/P1/P2 backlog + features wired end-to-end** (hygiene/tests/docs/deploy +
 live-data resilience + all P2 feature-comprehensiveness picks across all 5 packages, reachable from
@@ -31,9 +34,10 @@ every app is a polished product:
 - **Docs/arch:** root `ARCHITECTURE.md` (7 Mermaid diagrams), `docs/getting-started.md`, all READMEs refreshed.
 Tests after both passes: options **209** / backtesting **205** / portfolio **259** / market-data **222** +
 order-book **53 C++ + 41 py** — all green, gates met; ruff/format/mypy clean; cross-package contract intact.
-`render.yaml` deploys market-data on Redis+disk alone (DuckDB default). Branches: just
-`feature/agent-improvements` + `main`. **NOTHING PUSHED** — the 2026-06-03 work was **squashed into one commit**;
-the branch still awaits the user's push.
+`render.yaml` deploys market-data on Redis+disk alone (DuckDB default). **As of 2026-06-07 everything is
+merged to `main` and PUSHED** to `origin` (the old single-commit `main` was force-replaced; backed up locally as
+tag `backup/old-main-4dcd325`). Only `main` remains. Deploy in progress: Render Blueprint
+(`render.yaml` Key Value fixed to `type: keyvalue` under `services`) + Netlify (showcase).
 
 **P3: competitive features — ✅ COMPLETE for all 5 packages (2026-06-03 + 2026-06-04).** Gap-analysis-first per
 package (read-only `feature-architect`), confirm with the user, then implement additive + contract-safe picks.
