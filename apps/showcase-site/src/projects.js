@@ -1,8 +1,10 @@
 // Single source of truth for the 5 quant projects.
 //
-// `demoUrl` values are PLACEHOLDERS. Once each Render service is deployed,
-// replace the `<repo>.onrender.com` host with the real URL Render assigns.
-// `liveDemo: false` means the project is not a hosted service (no button).
+// `demoUrl` hosts are set to each Render SERVICE NAME (from render.yaml), which
+// is the URL Render assigns by default: https://<service-name>.onrender.com.
+// VERIFY each against the Render dashboard after deploy — Render appends a
+// random suffix (e.g. -a1b2) if that subdomain is already taken globally; if so,
+// paste the real host here. `liveDemo: false` = not a hosted web service (no button).
 
 export const GITHUB_OWNER = "nicholim";
 
@@ -27,7 +29,7 @@ export const projects = [
         "opt-in signed-FIFO short selling, and a turnkey optimize-then-backtest workflow.",
     },
     liveDemo: true,
-    demoUrl: "https://backtesting-framework.onrender.com",
+    demoUrl: "https://backtesting-dashboard.onrender.com",
     demoNote: "Dash web service on Render (gunicorn).",
   },
   {
@@ -48,11 +50,11 @@ export const projects = [
         "DuckDB), a tested reconnect/backoff path, and a replay feeder, rather than a client library " +
         "or a standalone storage engine.",
     },
-    liveDemo: true,
-    demoUrl: "https://market-data-pipeline.onrender.com",
+    liveDemo: false,
     demoNote:
-      "Background worker on Render (Docker). Needs Render Redis + an external TimescaleDB/Postgres; " +
-      "no public web UI — link points at the service dashboard.",
+      "Background worker on Render (Docker) with Render Key Value (Redis) + a local DuckDB sink — " +
+      "no public web UI, so there's no live link (a worker has no HTTP endpoint). Runs locally via " +
+      "`make run-market-data`, with a Streamlit monitor via `make run-market-monitor`.",
   },
   {
     repo: "options-pricing-calculator",
@@ -119,7 +121,7 @@ export const projects = [
         "FastAPI demo, rather than a broad convex-optimization toolkit.",
     },
     liveDemo: true,
-    demoUrl: "https://portfolio-optimization-engine.onrender.com",
+    demoUrl: "https://portfolio-optimization-api.onrender.com",
     demoNote: "FastAPI service on Render (uvicorn). Try POST /optimize or open /docs.",
   },
 ];
