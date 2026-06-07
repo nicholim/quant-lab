@@ -29,7 +29,7 @@ export const projects = [
         "opt-in signed-FIFO short selling, and a turnkey optimize-then-backtest workflow.",
     },
     liveDemo: true,
-    demoUrl: "https://backtesting-dashboard.onrender.com",
+    demoUrl: "https://backtesting-dashboard-id3q.onrender.com",
     demoNote: "Dash web service on Render (gunicorn).",
   },
   {
@@ -121,7 +121,7 @@ export const projects = [
         "FastAPI demo, rather than a broad convex-optimization toolkit.",
     },
     liveDemo: true,
-    demoUrl: "https://portfolio-optimization-api.onrender.com",
-    demoNote: "FastAPI service on Render (uvicorn). Try POST /optimize or open /docs.",
+    demoUrl: "https://portfolio-optimization-api-k31s.onrender.com/docs",
+    demoNote: "FastAPI service on Render (uvicorn). Opens the interactive /docs (Swagger) UI.",
   },
 ];

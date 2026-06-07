@@ -21,16 +21,14 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.9"
       # The dashboard fetches OHLCV via yfinance, which is frequently
-      # rate-limited from cloud IPs. Unlike the options app, the backtesting
-      # data layer RAISES (MarketDataError) on a failed fetch rather than
-      # auto-serving the fixture — the dashboard surfaces that as an in-UI
-      # error instead of 500ing, but the demo won't show results. Leave OFFLINE
-      # OFF by default so live data shows when egress allows; uncomment the line
-      # below to FORCE the deterministic bundled-fixture demo (see DEPLOY.md
-      # "Live market data / OFFLINE flags"). The env flag overrides the app's
-      # offline=False arg at the data layer.
-      # - key: BACKTESTING_OFFLINE
-      #   value: "1"
+      # rate-limited from cloud IPs — verified on Render: live fetch returns
+      # degenerate data and the optimizer's SLSQP solver then fails with
+      # "Inequality constraints incompatible", so the demo shows no results.
+      # ENABLED so the dashboard runs on the deterministic bundled fixture and
+      # ALWAYS renders real results (see DEPLOY.md "Live market data / OFFLINE
+      # flags"). Remove this to attempt live data once egress is reliable.
+      - key: BACKTESTING_OFFLINE
+        value: "1"
 
   # ---- Options pricing calculator (Streamlit) ----
   - type: web
@@ -59,10 +57,12 @@ services:
         sync: false
       # The "Live market" tab fetches chains via yfinance, which is often
       # rate-limited from cloud IPs. The app already falls back to the bundled
-      # sample chain on failure. To FORCE the deterministic offline demo,
-      # uncomment the line below (see DEPLOY.md "Live market data").
-      # - key: OPTIONS_PRICING_OFFLINE
-      #   value: "1"
+      # sample chain on failure, but ENABLED here so the Live-market + IV-surface
+      # tabs render the deterministic bundled chain reliably (no slow/flaky
+      # external calls). The Calculator tab is pure math and unaffected. Remove
+      # this to attempt live chains (it degrades gracefully either way).
+      - key: OPTIONS_PRICING_OFFLINE
+        value: "1"
 
   # ---- Portfolio optimization FastAPI demo ----
   - type: web
