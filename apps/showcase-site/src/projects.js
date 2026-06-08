@@ -29,7 +29,7 @@ export const projects = [
         "opt-in signed-FIFO short selling, and a turnkey optimize-then-backtest workflow.",
     },
     liveDemo: true,
-    demoUrl: "https://backtesting-dashboard-id3q.onrender.com",
+    demoUrl: "https://backtest.nicholaslimarsha.com",
     demoNote: "Dash web service on Render (gunicorn).",
   },
   {
