@@ -459,6 +459,35 @@ def _empty_state(title: str, body: str) -> html.Div:
     )
 
 
+def _placeholder_figure(message: str = "No results to display.") -> go.Figure:
+    """A clean, axis-free canvas with one centered hint.
+
+    Used as the INITIAL figure for every graph and as the empty/error return
+    from the callback, so a chart never shows bare default Plotly ``-1..6`` axes
+    before (or instead of) real data. Mirrors the ``.empty-state`` pattern for
+    the panels, applied to the plot surface.
+    """
+    fig = go.Figure(layout=go.Layout(template=_TPL))
+    fig.update_layout(
+        height=320,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        margin=dict(l=24, r=24, t=24, b=24),
+        annotations=[
+            dict(
+                text=message,
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(size=13, color="#5a6678"),  # --ink-soft: ≥4.5:1 on white
+            )
+        ],
+    )
+    return fig
+
+
 def build_app() -> Dash:
     app = Dash(__name__, title="Portfolio Lab — Optimizer + Backtester")
     app.layout = html.Div(
@@ -492,17 +521,36 @@ def build_app() -> Dash:
                                                         html.Div(
                                                             className="panel",
                                                             style={"flex": 2},
-                                                            children=dcc.Graph(id="frontier"),
+                                                            children=dcc.Graph(
+                                                                id="frontier",
+                                                                figure=_placeholder_figure(
+                                                                    "Run an analysis to plot the "
+                                                                    "efficient frontier."
+                                                                ),
+                                                                config={"displayModeBar": False},
+                                                            ),
                                                         ),
                                                         html.Div(
                                                             id="opt-metrics",
                                                             style={"flex": 1},
+                                                            children=_empty_state(
+                                                                "No analysis yet",
+                                                                "Set inputs on the left, then "
+                                                                "press Run analysis.",
+                                                            ),
                                                         ),
                                                     ],
                                                 ),
                                                 html.Div(
                                                     className="panel",
-                                                    children=dcc.Graph(id="weights"),
+                                                    children=dcc.Graph(
+                                                        id="weights",
+                                                        figure=_placeholder_figure(
+                                                            "Optimized weights appear here "
+                                                            "after you run."
+                                                        ),
+                                                        config={"displayModeBar": False},
+                                                    ),
                                                 ),
                                             ],
                                         ),
@@ -521,11 +569,24 @@ def build_app() -> Dash:
                                                 ),
                                                 html.Div(
                                                     className="panel",
-                                                    children=dcc.Graph(id="equity"),
+                                                    children=dcc.Graph(
+                                                        id="equity",
+                                                        figure=_placeholder_figure(
+                                                            "Run an analysis to see the "
+                                                            "equity curve."
+                                                        ),
+                                                        config={"displayModeBar": False},
+                                                    ),
                                                 ),
                                                 html.Div(
                                                     className="panel",
-                                                    children=dcc.Graph(id="drawdown"),
+                                                    children=dcc.Graph(
+                                                        id="drawdown",
+                                                        figure=_placeholder_figure(
+                                                            "Drawdown appears here after you run."
+                                                        ),
+                                                        config={"displayModeBar": False},
+                                                    ),
                                                 ),
                                             ],
                                         ),
@@ -561,7 +622,7 @@ def build_app() -> Dash:
     def _run(_n, tickers_raw, start, end, rf, objective, allow_short_value):
         tickers = [t.strip().upper() for t in (tickers_raw or "").split(",") if t.strip()]
         allow_short = "short" in (allow_short_value or [])
-        empty = go.Figure(layout=go.Layout(template=_TPL))
+        empty = _placeholder_figure()
 
         if not tickers:
             alert = html.Div(

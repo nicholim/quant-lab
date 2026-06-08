@@ -189,9 +189,11 @@ body {
 .empty-state {
   text-align: center;
   padding: 60px 20px;
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* >=4.5:1 on white/canvas (was --ink-faint ~3:1) */
+  font-size: 13.5px;
+  line-height: 1.5;
 }
-.empty-state h4 { color: var(--ink-soft); margin: 0 0 6px; font-size: 16px; }
+.empty-state h4 { color: var(--ink); margin: 0 0 6px; font-size: 16px; }
 
 /* --- Metric cards --- */
 .metric-cards {
