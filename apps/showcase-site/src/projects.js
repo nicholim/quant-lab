@@ -76,7 +76,7 @@ export const projects = [
         "reference (exotics/Heston/MC) we benchmark vanilla accuracy against.",
     },
     liveDemo: true,
-    demoUrl: "https://options-pricing-calculator.onrender.com",
+    demoUrl: "https://options.nicholaslimarsha.com",
     demoNote: "Streamlit web service on Render (also deployable to Streamlit Community Cloud).",
   },
   {
