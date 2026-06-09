@@ -1,42 +1,67 @@
 /* Portfolio Lab — dark-sidebar quant dashboard.
+   Brand DNA shared with the showcase site (quant.nicholaslimarsha.com):
+   near-black ink, paper canvas, one signal-red accent, Hanken Grotesk + Spline
+   Sans Mono. Product register: dense, familiar, the tool disappears into the task.
    Dash auto-loads every assets/*.css. No external framework dependency. */
 
 :root {
-  --ink:          #0f1b2d;
-  --ink-soft:     #4a5668;
-  --ink-faint:    #6b7a94;
-  --navy:         #1f3b73;
-  --navy-deep:    #111827;
-  --navy-hover:   #243f80;
-  --panel:        #ffffff;
-  --canvas:       #f0f4f9;
-  --sidebar:      #111827;
-  --sidebar-soft: #18243a;
-  --sidebar-hover:#1e2f48;
-  --line:         #dde4ee;
-  --line-dark:    #243044;
-  --pos:          #16a065;
-  --neg:          #b91c1c;
-  --accent:       #c79a3a;
-  --radius:       8px;
+  /* Ink + paper (matches the showcase neutral ramp) */
+  --ink:          #1d1f24;   /* primary text on light */
+  --ink-soft:     #565a63;   /* secondary text — ≥4.5:1 on paper */
+  --ink-faint:    #71757e;   /* tertiary labels */
+  --paper:        #f3f4f5;   /* content canvas */
+  --panel:        #ffffff;   /* chart/table surfaces */
+
+  /* Dark sidebar/header — near-black, neutral (not navy) */
+  --sidebar:      #16171b;
+  --sidebar-soft: #1f2127;
+  --sidebar-hover:#2a2d34;
+  --field-bg:     #0f1013;
+  --ctl-border:   #3a3e48;   /* visible input/control outline on dark */
+  /* Readable text on the dark sidebar */
+  --on-dark:      #eef1f5;   /* section headers / strong labels */
+  --on-dark-2:    #c3cad5;   /* field labels */
+  --on-dark-3:    #97a1b0;   /* hints — ≥4.5:1 on --sidebar */
+
+  --line:         #e4e6e9;   /* hairline on light */
+  --line-dark:    #2c2e35;   /* hairline on dark */
+
+  /* Semantic data colors */
+  --pos:          #1f9d63;   /* calm green — gains */
+  --neg:          #cf3a22;   /* red — losses / drawdown */
+  --warn:         #d6a531;   /* amber — offline/sample dot only */
+
+  /* One brand accent: signal red (selection, focus, active, brand spark) */
+  --accent:       #cf3a22;
+  --accent-deep:  #b5301b;
+  --accent-soft:  rgba(207,58,34,.14);
+  --accent-line:  rgba(207,58,34,.42);
+
+  /* Primary action button = ink (a red button would read as danger) */
+  --btn:          #1d1f24;
+  --btn-hover:    #2f323a;
+
+  --radius:       9px;
   --radius-sm:    6px;
-  --shadow-sm:    0 1px 2px rgba(15,27,45,.05), 0 2px 6px rgba(15,27,45,.05);
-  --shadow:       0 1px 3px rgba(15,27,45,.08), 0 4px 14px rgba(15,27,45,.07);
-  --mono: "JetBrains Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --shadow-sm:    0 1px 2px rgba(20,22,28,.04);
+  --mono: "Spline Sans Mono", ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  --sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  background: var(--canvas);
+  background: var(--paper);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+::selection { background: var(--accent-soft); color: var(--ink); }
 
 /* ─── Header ──────────────────────────────────────────────────────────────── */
 
@@ -44,11 +69,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  height: 54px;
-  background: var(--navy-deep);
+  padding: 0 26px;
+  height: 64px;
+  background: var(--sidebar);
   color: #fff;
-  border-bottom: 1px solid rgba(255,255,255,.07);
+  border-bottom: 1px solid var(--line-dark);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -57,42 +82,39 @@ body {
 .app-header__brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 13px;
 }
 
-.app-header__mark {
-  font-family: var(--mono);
-  font-weight: 700;
-  letter-spacing: .07em;
-  font-size: 11.5px;
-  padding: 3px 8px;
-  border: 1.5px solid rgba(199,154,58,.45);
-  border-radius: 4px;
-  color: var(--accent);
+.app-header__logo {
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
+  display: block;
 }
 
 .app-header__title {
-  font-size: 15.5px;
-  font-weight: 650;
-  letter-spacing: -.015em;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.01em;
   margin: 0;
   color: #fff;
 }
 
 .app-header__subtitle {
-  font-size: 12px;
-  color: rgba(255,255,255,.45);
-  margin: 1px 0 0;
+  font-size: 13px;
+  color: rgba(255,255,255,.55);
+  margin: 2px 0 0;
 }
 
 .app-header__status {
-  font-size: 11px;
-  font-family: var(--mono);
-  color: rgba(255,255,255,.55);
+  font-size: 12.5px;
+  color: rgba(255,255,255,.72);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  padding: 6px 13px;
+  border: 1px solid var(--line-dark);
+  border-radius: 999px;
 }
 
 .status-dot {
@@ -101,27 +123,29 @@ body {
   border-radius: 50%;
   background: var(--pos);
   display: inline-block;
-  box-shadow: 0 0 0 2px rgba(22,160,101,.25);
+  box-shadow: 0 0 0 2px rgba(31,157,99,.25);
 }
 
-.status-dot--offline {
-  background: var(--accent);
-  box-shadow: 0 0 0 2px rgba(199,154,58,.25);
+/* Sample-data mode (the deployed default): a calm neutral dot, not a green
+   "live" light and not an alarming amber warning. */
+.status-dot--sample {
+  background: #8b94a3;
+  box-shadow: 0 0 0 2px rgba(139,148,163,.22);
 }
 
 /* ─── Layout ──────────────────────────────────────────────────────────────── */
 
 .app-shell {
   display: flex;
-  height: calc(100vh - 54px);
+  height: calc(100vh - 64px);
   overflow: hidden;
 }
 
 /* ─── Sidebar ─────────────────────────────────────────────────────────────── */
 
 .sidebar {
-  width: 272px;
-  flex: 0 0 272px;
+  width: 276px;
+  flex: 0 0 276px;
   background: var(--sidebar);
   color: #e2e8f0;
   display: flex;
@@ -131,149 +155,190 @@ body {
 }
 
 .sidebar__heading {
-  padding: 13px 16px 11px;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,.3);
+  padding: 16px 20px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--on-dark);
   border-bottom: 1px solid var(--line-dark);
   flex-shrink: 0;
 }
 
 .sidebar__body {
-  padding: 14px 14px 4px;
+  padding: 8px 20px 10px;
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
   scrollbar-width: thin;
   scrollbar-color: var(--line-dark) transparent;
 }
 
-/* ─── Control groups ──────────────────────────────────────────────────────── */
+/* ─── Control groups — flat sections, not nested cards ────────────────────── */
 
 .control-group {
-  border: 1px solid var(--line-dark);
-  border-radius: var(--radius);
-  background: var(--sidebar-soft);
+  border: none;
+  background: transparent;
+  padding: 18px 0 4px;
+  border-top: 1px solid var(--line-dark);
+}
+
+.control-group:first-child {
+  border-top: none;
+  padding-top: 16px;
 }
 
 .control-group__legend {
   display: block;
-  padding: 8px 13px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: .11em;
-  color: var(--accent);
-  font-weight: 700;
-  border-bottom: 1px solid var(--line-dark);
-  background: rgba(199,154,58,.04);
-  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+  padding: 0;
+  margin-bottom: 15px;
+  font-size: 13px;
+  letter-spacing: 0;
+  color: var(--on-dark);
+  font-weight: 600;
 }
 
 .control-group__body {
-  padding: 12px 13px 10px;
+  padding: 0;
 }
 
 /* ─── Fields ──────────────────────────────────────────────────────────────── */
 
-.field {
-  margin-bottom: 10px;
-}
-
-.field:last-child {
-  margin-bottom: 2px;
-}
+.field { margin-bottom: 15px; }
+.field:last-child { margin-bottom: 2px; }
 
 .field label {
   display: block;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 600;
-  color: #94a3b8;
-  margin-bottom: 5px;
-  letter-spacing: .01em;
+  color: var(--on-dark-2);
+  margin-bottom: 7px;
+  letter-spacing: 0;
 }
 
 /* Global hint class — works inside and outside .field */
 .hint {
   display: block;
-  font-size: 11px;
-  color: #6a7d96;    /* ≥4.5:1 on --sidebar-soft (#18243a) */
-  line-height: 1.45;
-  margin-top: 4px;
+  font-size: 12px;
+  color: var(--on-dark-3);    /* ≥4.5:1 on --sidebar */
+  line-height: 1.5;
+  margin-top: 7px;
 }
 
 /* ─── Inputs ──────────────────────────────────────────────────────────────── */
+/* Dash v4 wraps every dcc.Input in div.dash-input-container (its default style
+   is a WHITE box with a navy border). Style THAT wrapper as the field, and make
+   the inner <input> + the number steppers transparent so nothing peeks out. */
 
-.field input[type="text"],
-.field input[type="number"] {
+.field .dash-input-container {
+  display: flex !important;
+  align-items: stretch;
   width: 100%;
-  padding: 7px 10px;
-  border: 1px solid var(--line-dark);
-  border-radius: var(--radius-sm);
-  background: #0d1625;
-  color: #e2e8f0;
-  font-size: 13px;
-  font-family: var(--mono);
+  background: var(--field-bg) !important;
+  border: 1px solid var(--ctl-border) !important;
+  border-radius: var(--radius-sm) !important;
+  overflow: hidden;
   transition: border-color .14s, box-shadow .14s;
+}
+
+.field .dash-input-container:hover {
+  border-color: #4a4f5a !important;
+}
+
+.field .dash-input-container:focus-within {
+  border-color: var(--accent-line) !important;
+  box-shadow: 0 0 0 2.5px var(--accent-soft) !important;
+}
+
+.field input.dash-input-element,
+.field .dash-input-container input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  border: none !important;
+  background: transparent !important;
+  color: #f1f4f8 !important;
+  font-size: 14px !important;
+  font-family: var(--mono) !important;
+  padding: 10px 12px !important;
+  outline: none !important;
   -moz-appearance: textfield;
 }
 
-.field input[type="text"]:focus,
-.field input[type="number"]:focus {
-  outline: none;
-  border-color: rgba(199,154,58,.7);
-  box-shadow: 0 0 0 2.5px rgba(199,154,58,.18);
-}
+.field input.dash-input-element::placeholder { color: #6b7480; }
 
 .field input[type="number"]::-webkit-outer-spin-button,
 .field input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Number-input +/- steppers: flat, inside the field, separated by a hairline */
+.field .dash-input-stepper {
+  flex: 0 0 auto;
+  width: 36px;
+  border: none !important;
+  border-left: 1px solid var(--line-dark) !important;
+  background: transparent !important;
+  color: var(--on-dark-3) !important;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+
+.field .dash-input-stepper:hover {
+  background: var(--sidebar-hover) !important;
+  color: #f1f4f8 !important;
+}
+
+.field .dash-input-stepper:active {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
 }
 
 /* ─── Dropdown (Dash v4 / Radix override) ─────────────────────────────────── */
 
-/* Trigger button */
 .field .dash-dropdown-wrapper button.dash-dropdown {
-  background: #0d1625 !important;
-  border: 1px solid var(--line-dark) !important;
+  background: var(--field-bg) !important;
+  border: 1px solid var(--ctl-border) !important;
   border-radius: var(--radius-sm) !important;
-  color: #e2e8f0 !important;
-  font-size: 13px !important;
+  color: #f1f4f8 !important;
+  font-size: 14px !important;
   font-family: var(--mono) !important;
-  min-height: 34px !important;
-  padding: 0 10px !important;
+  min-height: 40px !important;
+  padding: 0 12px !important;
   cursor: pointer;
   transition: border-color .14s, box-shadow .14s;
   width: 100%;
 }
 
+.field .dash-dropdown-wrapper button.dash-dropdown:hover {
+  border-color: #4a4f5a !important;
+}
+
 .field .dash-dropdown-wrapper button.dash-dropdown:focus,
 .field .dash-dropdown-wrapper button.dash-dropdown:focus-visible {
   outline: none !important;
-  border-color: rgba(199,154,58,.7) !important;
-  box-shadow: 0 0 0 2.5px rgba(199,154,58,.18) !important;
+  border-color: var(--accent-line) !important;
+  box-shadow: 0 0 0 2.5px var(--accent-soft) !important;
 }
 
 .field .dash-dropdown-wrapper .dash-dropdown-trigger-icon path {
-  stroke: #56677f;
+  stroke: #6b7280;
 }
 
-/* Open listbox container */
 .dash-dropdown-content {
-  background: #18243a !important;
+  background: var(--sidebar-soft) !important;
   border: 1px solid var(--line-dark) !important;
   border-radius: var(--radius-sm) !important;
-  box-shadow: 0 8px 24px rgba(0,0,0,.35) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4) !important;
   z-index: 200 !important;
   overflow: hidden;
 }
 
-/* Options list */
 .dash-options-list {
-  background: #18243a !important;
+  background: var(--sidebar-soft) !important;
   padding: 4px 0 !important;
 }
 
@@ -290,21 +355,19 @@ body {
 
 .dash-options-list-option:hover,
 .dash-options-list-option:focus {
-  background: #1f2f49 !important;
-  color: #e2e8f0 !important;
+  background: var(--sidebar-hover) !important;
+  color: #eef2f7 !important;
 }
 
 .dash-options-list-option.selected {
-  background: rgba(199,154,58,.12) !important;
-  color: var(--accent) !important;
+  background: var(--accent-soft) !important;
+  color: #f0a08e !important;
 }
 
-/* Hide radio button inside dropdown (selection is shown via background) */
 .dash-dropdown-options .dash-options-list-option-checkbox {
   display: none !important;
 }
 
-/* Dropdown option text: monospace to match selected value display */
 .dash-dropdown-options .dash-options-list-option-text {
   font-family: var(--mono);
   font-size: 13px;
@@ -312,26 +375,24 @@ body {
 
 /* ─── Checklist (shares option-list classes with dropdown) ────────────────── */
 
-.field .dash-checklist {
-  padding: 2px 0;
-}
+.field .dash-checklist { padding: 2px 0; }
 
 .field .dash-checklist .dash-options-list-option {
   background: transparent !important;
   color: #c4d0e0 !important;
-  font-size: 12.5px !important;
+  font-size: 13.5px !important;
   padding: 4px 0 !important;
-  gap: 6px;
+  gap: 7px;
 }
 
 .field .dash-checklist .dash-options-list-option:hover {
   background: transparent !important;
-  color: #e2e8f0 !important;
+  color: #eef2f7 !important;
 }
 
 .field .dash-checklist .dash-options-list-option-text {
   font-family: var(--sans) !important;
-  font-size: 12.5px !important;
+  font-size: 13.5px !important;
   color: inherit;
 }
 
@@ -343,10 +404,8 @@ body {
   cursor: pointer;
 }
 
-/* ─── Checklist ───────────────────────────────────────────────────────────── */
-
 .field .dash-checklist label {
-  font-size: 12.5px !important;
+  font-size: 13.5px !important;
   color: #c4d0e0 !important;
   cursor: pointer;
 }
@@ -360,29 +419,34 @@ body {
 
 .btn-run {
   width: 100%;
-  padding: 10px;
-  background: var(--navy);
+  padding: 12px;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: var(--radius);
-  font-size: 13.5px;
-  font-weight: 650;
-  letter-spacing: .02em;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  font-family: var(--sans);
   cursor: pointer;
   transition: background .14s, transform .05s;
-  margin-top: 2px;
+  margin-top: 6px;
 }
 
-.btn-run:hover  { background: var(--navy-hover); }
+.btn-run:hover  { background: var(--accent-deep); }
 .btn-run:active { transform: translateY(1px); }
+.btn-run:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.16), 0 0 0 5px var(--accent-soft);
+}
 
 /* ─── Status line ─────────────────────────────────────────────────────────── */
 
 .status-line {
-  padding: 10px 14px 14px;
-  font-size: 11px;
-  color: #3d4f67;
-  line-height: 1.4;
+  padding: 13px 20px 16px;
+  font-size: 12px;
+  color: var(--on-dark-3);
+  line-height: 1.5;
   font-family: var(--mono);
   border-top: 1px solid var(--line-dark);
   flex-shrink: 0;
@@ -392,7 +456,7 @@ body {
 
 .content {
   flex: 1;
-  padding: 20px 24px;
+  padding: 22px 26px;
   min-width: 0;
   overflow-y: auto;
 }
@@ -409,67 +473,102 @@ body {
 }
 
 .alert--error {
-  background: #fff1f0;
-  color: #7f1d1d;
-  border-color: #fecaca;
+  background: #fdf1ee;
+  color: #8a2412;
+  border-color: #f3c9bf;
 }
 
 .alert--info {
-  background: #eff6ff;
-  color: #1e3a8a;
-  border-color: #bfdbfe;
+  background: #f4f5f6;
+  color: #3a3d44;
+  border-color: var(--line);
 }
 
 /* ─── Empty states ────────────────────────────────────────────────────────── */
 
 .empty-state {
-  text-align: center;
-  padding: 52px 24px;
+  text-align: left;
+  padding: 32px 4px;
   color: var(--ink-soft);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 42ch;
 }
 
 .empty-state h4 {
   color: var(--ink);
-  margin: 0 0 6px;
-  font-size: 15px;
-  font-weight: 650;
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.empty-state__steps {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.empty-state__steps li {
+  position: relative;
+  padding: 6px 0 6px 28px;
+  counter-increment: step;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+}
+
+.empty-state__steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ─── Metric cards ────────────────────────────────────────────────────────── */
 
 .metric-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
   margin-bottom: 18px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .metric-card {
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  box-shadow: var(--shadow-sm);
+  padding: 16px 18px 17px;
 }
 
 .metric-card__label {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: .07em;
-  color: var(--ink-faint);
-  font-weight: 600;
-  margin-bottom: 5px;
+  font-size: 12.5px;
+  letter-spacing: 0;
+  color: var(--ink-soft);
+  font-weight: 500;
+  margin-bottom: 8px;
 }
 
 .metric-card__value {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 27px;
+  font-weight: 600;
   font-family: var(--mono);
-  letter-spacing: -.025em;
+  letter-spacing: -.02em;
   color: var(--ink);
-  line-height: 1.2;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 
 .metric-card__value--pos { color: var(--pos); }
@@ -484,18 +583,16 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  font-size: 13px;
-  box-shadow: var(--shadow-sm);
+  font-size: 14px;
 }
 
 .metric-table td {
-  padding: 8px 14px;
+  padding: 11px 16px;
   border-bottom: 1px solid var(--line);
 }
 
 .metric-table tr:last-child td { border-bottom: none; }
-
-.metric-table tr:hover td { background: #f7f9fd; }
+.metric-table tr:hover td { background: #f7f8fa; }
 
 .metric-table td:first-child {
   color: var(--ink-soft);
@@ -505,8 +602,9 @@ body {
 .metric-table td:last-child {
   text-align: right;
   font-family: var(--mono);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ─── Panels ──────────────────────────────────────────────────────────────── */
@@ -516,33 +614,64 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 16px;
-  box-shadow: var(--shadow-sm);
   margin-bottom: 14px;
   overflow: hidden;
 }
 
 .panel__title {
-  font-size: 12.5px;
-  font-weight: 700;
-  letter-spacing: .01em;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--ink);
-  margin: 0 0 4px;
+  margin: 0 0 8px;
 }
 
-/* ─── Tabs ────────────────────────────────────────────────────────────────── */
+/* ─── Tabs (Dash v4 / Radix override) ─────────────────────────────────────── */
 
-.dash-tab {
+/* dcc.Tabs renders div.tab-container > div.tab (+ .tab--selected). Restyle the
+   default boxy full-width toggle into a left-aligned underline tab bar.
+   !important is needed to beat Dash's bundled tab CSS + inline selected style. */
+.tab-container {
+  justify-content: flex-start !important;
+  gap: 4px;
+  border-bottom: 1px solid var(--line) !important;
+  margin-bottom: 4px;
+}
+
+.tab.dash-tab {
+  flex: 0 0 auto !important;
+  font-family: var(--sans) !important;
   font-weight: 600 !important;
-  font-size: 13.5px !important;
+  font-size: 14.5px !important;
+  color: var(--ink-faint) !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important;
+  padding: 12px 18px !important;
+  margin-bottom: -1px !important;
+  transition: color .14s, border-color .14s;
+}
+
+.tab.dash-tab:hover {
+  color: var(--ink-soft) !important;
+}
+
+/* Active tab: red underline + ink text (replaces Dash's default purple) */
+.tab.tab--selected.dash-tab {
+  color: var(--ink) !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 2px solid var(--accent) !important;
 }
 
 /* ─── Section label ───────────────────────────────────────────────────────── */
 
 .section-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--ink-faint);
-  margin: 2px 0 16px;
+  font-size: 13.5px;
+  font-weight: 400;
+  color: var(--ink-soft);
+  margin: 16px 0 18px;
+  letter-spacing: 0;
+  text-transform: none;
 }

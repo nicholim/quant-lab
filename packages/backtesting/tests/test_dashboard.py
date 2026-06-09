@@ -142,10 +142,10 @@ def test_default_objectives_still_present():
 
 
 def test_marker_covers_every_objective():
-    # frontier_figure falls back to a default marker, but every objective key
-    # should still have an explicit style so the legend is consistent.
+    # frontier_figure falls back to a default symbol, but every objective key
+    # should still have an explicit marker symbol so the legend is consistent.
     for key in dashboard.OBJECTIVE_TO_KEY.values():
-        assert key in dashboard._MARKER
+        assert key in dashboard._MARKER_SYMBOL
 
 
 class _CapturingBacktest:

@@ -13,6 +13,7 @@ they are unit-tested without launching a server.
 """
 
 import os
+from urllib.parse import quote
 
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -29,30 +30,58 @@ from src.portfolio import Portfolio
 from src.strategy import OptimizationRebalanceStrategy
 
 # --- Shared visual identity (kept in sync with assets/dashboard.css) ---
+# Same brand DNA as the showcase site: near-black ink, paper, one signal-red
+# accent. Semantic green/red carry P&L; the accent is reserved for the chosen
+# objective and interactive state, never decoration.
 
-NAVY = "#1f3b73"
-POS = "#1b8a5a"
-NEG = "#c0392b"
-ACCENT = "#c79a3a"
-INK = "#0f1b2d"
-GRID = "#e3e8ef"
+INK = "#1d1f24"
+INK_SOFT = "#565a63"
+POS = "#1f9d63"
+NEG = "#cf3a22"
+ACCENT = "#cf3a22"
+MUTED = "#9aa0a8"
+GRID = "#e9ebee"
+SANS = "Hanken Grotesk, -apple-system, Segoe UI, system-ui, sans-serif"
+MONO = "Spline Sans Mono, SFMono-Regular, Menlo, monospace"
+
+# Inline candlestick logo for the header (white wicks + one red body), echoing
+# the showcase favicon. Inlined as a data URI so there is no extra asset fetch.
+_LOGO_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="8" fill="#1f2127"/>'
+    '<g stroke="#eef1f5" stroke-width="2.1" stroke-linecap="round">'
+    '<line x1="10" y1="7" x2="10" y2="25"/><line x1="16" y1="5" x2="16" y2="27"/></g>'
+    '<rect x="7.7" y="12.5" width="4.6" height="8.5" rx="1.3" fill="#eef1f5"/>'
+    '<rect x="13.7" y="9.5" width="4.6" height="13" rx="1.3" fill="#cf3a22"/>'
+    '<line x1="23" y1="11" x2="23" y2="21" stroke="#eef1f5" stroke-width="2.1" '
+    'stroke-linecap="round"/>'
+    '<rect x="20.7" y="13.5" width="4.6" height="5.5" rx="1.3" fill="#eef1f5"/>'
+    "</svg>"
+)
+_LOGO_DATA_URI = "data:image/svg+xml;utf8," + quote(_LOGO_SVG)
+
+# Restrained sequential scale for the random-portfolio cloud (pale -> ink),
+# replacing the rainbow Viridis so the chart reads on-brand.
+_SHARPE_SCALE = [[0.0, "#d9dbde"], [0.5, "#9aa0a8"], [1.0, INK]]
 
 # A single Plotly template so every figure shares fonts, gridlines, margins and
 # legend placement. Registered under "quantlab" and applied per-figure.
 _TEMPLATE = go.layout.Template(
     layout=go.Layout(
-        font=dict(
-            family="-apple-system, Segoe UI, Inter, system-ui, sans-serif", color=INK, size=12
-        ),
-        title=dict(font=dict(size=15, color=INK), x=0.01, xanchor="left"),
+        font=dict(family=SANS, color=INK, size=13),
+        title=dict(font=dict(size=16, color=INK), x=0.01, xanchor="left"),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        colorway=[NAVY, POS, ACCENT, NEG, "#7d6cc4", "#3a8fb7"],
-        xaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID, ticks="outside"),
-        yaxis=dict(gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID, ticks="outside"),
+        colorway=[INK, POS, ACCENT, "#6b7280", MUTED, "#3f4248"],
+        xaxis=dict(
+            gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID, ticks="outside", automargin=True
+        ),
+        yaxis=dict(
+            gridcolor=GRID, zerolinecolor=GRID, linecolor=GRID, ticks="outside", automargin=True
+        ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=60, r=24, t=52, b=48),
-        hoverlabel=dict(font=dict(family="SFMono-Regular, Menlo, monospace", size=12)),
+        margin=dict(l=72, r=24, t=56, b=52),
+        hoverlabel=dict(font=dict(family=MONO, size=12)),
     )
 )
 pio.templates["quantlab"] = _TEMPLATE
@@ -73,20 +102,22 @@ OBJECTIVE_TO_KEY = {
     "hrp": "hrp",
 }
 
-_MARKER = {
-    "max_sharpe": ("star", "#d62728"),
-    "min_vol": ("star", "#1f77b4"),
-    "risk_parity": ("diamond", "#2ca02c"),
-    "sortino": ("diamond", "#ff7f0e"),
-    "min_cvar": ("diamond", "#9467bd"),
-    "hrp": ("diamond", "#8c564b"),
+# Distinct symbol per objective; color is assigned at plot time (the chosen
+# objective in accent red, the rest muted ink) so the legend reads calm.
+_MARKER_SYMBOL = {
+    "max_sharpe": "star",
+    "min_vol": "circle",
+    "risk_parity": "diamond",
+    "sortino": "triangle-up",
+    "min_cvar": "square",
+    "hrp": "cross",
 }
 
 
 # --- Figure builders (pure) ---
 
 
-def frontier_figure(frontier, results) -> go.Figure:
+def frontier_figure(frontier, results, chosen=None) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
         go.Scattergl(
@@ -96,32 +127,60 @@ def frontier_figure(frontier, results) -> go.Figure:
             marker=dict(
                 size=5,
                 color=frontier["sharpe"],
-                colorscale="Viridis",
-                colorbar=dict(title="Sharpe"),
-                opacity=0.5,
+                colorscale=_SHARPE_SCALE,
+                colorbar=dict(title="Sharpe", outlinewidth=0, thickness=12),
+                opacity=0.45,
             ),
             name="Random portfolios",
             hovertemplate="vol %{x:.1%}<br>ret %{y:.1%}<extra></extra>",
         )
     )
-    for name, res in results.items():
-        symbol, color = _MARKER.get(name, ("circle", "black"))
+    # The other objectives collapse into ONE muted "Other objectives" legend
+    # entry (not six rainbow rows), and the chosen objective is a single red
+    # star on top — so the legend reads as three clean items.
+    others = [(n, r) for n, r in results.items() if n != chosen]
+    if others:
+        fig.add_trace(
+            go.Scatter(
+                x=[r.volatility for _, r in others],
+                y=[r.expected_return for _, r in others],
+                mode="markers",
+                marker=dict(
+                    size=10,
+                    symbol=[_MARKER_SYMBOL.get(n, "circle") for n, _ in others],
+                    color=MUTED,
+                    line=dict(width=1, color="white"),
+                ),
+                name="Other objectives",
+                text=[n.replace("_", " ").title() for n, _ in others],
+                hovertemplate="<b>%{text}</b><br>vol %{x:.1%}<br>ret %{y:.1%}<extra></extra>",
+            )
+        )
+    if chosen in results:
+        res = results[chosen]
+        label = chosen.replace("_", " ").title()
         fig.add_trace(
             go.Scatter(
                 x=[res.volatility],
                 y=[res.expected_return],
                 mode="markers",
-                marker=dict(size=15, symbol=symbol, color=color, line=dict(width=1, color="white")),
-                name=name.replace("_", " ").title(),
+                marker=dict(
+                    size=18,
+                    symbol=_MARKER_SYMBOL.get(chosen, "star"),
+                    color=ACCENT,
+                    line=dict(width=1.5, color="white"),
+                ),
+                name=f"{label} (selected)",
+                hovertemplate=f"<b>{label}</b><br>vol %{{x:.1%}}<br>ret %{{y:.1%}}<extra></extra>",
             )
         )
     fig.update_layout(
-        title="Efficient Frontier — risk vs. return",
-        xaxis_title="Annualized Volatility (σ)",
-        yaxis_title="Annualized Return",
+        title="Efficient frontier — risk vs. return",
+        xaxis_title="Annualized volatility (σ)",
+        yaxis_title="Annualized return",
         xaxis_tickformat=".0%",
         yaxis_tickformat=".0%",
-        height=480,
+        height=460,
         template=_TPL,
     )
     return fig
@@ -133,12 +192,12 @@ def weights_figure(result, tickers) -> go.Figure:
         go.Bar(
             x=[t for t, _ in pairs],
             y=[w for _, w in pairs],
-            marker_color=NAVY,
+            marker_color=INK,
             hovertemplate="%{x}: %{y:.1%}<extra></extra>",
         )
     )
     fig.update_layout(
-        title="Optimal Weights (allocation by asset)",
+        title="Optimal weights — allocation by asset",
         xaxis_title="Asset",
         yaxis_title="Portfolio weight",
         yaxis_tickformat=".0%",
@@ -155,15 +214,15 @@ def equity_figure(analytics) -> go.Figure:
             x=eq.index,
             y=eq["equity"],
             mode="lines",
-            line=dict(color=NAVY, width=2),
+            line=dict(color=INK, width=2),
             name="Equity",
             hovertemplate="%{x|%Y-%m-%d}<br>$%{y:,.0f}<extra></extra>",
         )
     )
     fig.update_layout(
-        title="Equity Curve — portfolio value over time",
+        title="Equity curve — portfolio value over time",
         xaxis_title="Date",
-        yaxis_title="Portfolio Value (USD)",
+        yaxis_title="Portfolio value (USD)",
         yaxis_tickprefix="$",
         yaxis_tickformat=",.0f",
         height=380,
@@ -181,7 +240,7 @@ def drawdown_figure(analytics) -> go.Figure:
             y=dd,
             fill="tozeroy",
             line=dict(color=NEG, width=1.5),
-            fillcolor="rgba(192, 57, 43, 0.12)",
+            fillcolor="rgba(207, 58, 34, 0.10)",
             name="Drawdown",
             hovertemplate="%{x|%Y-%m-%d}<br>%{y:.1%}<extra></extra>",
         )
@@ -219,14 +278,12 @@ def optimization_metric_rows(analysis, key) -> list[list[str]]:
 
 
 def backtest_metric_rows(analytics) -> list[list[str]]:
+    # Total Return / Sharpe / Sortino / Max Drawdown are the headline cards above;
+    # this table carries the *additional* metrics so nothing is shown twice.
     rows = [
-        ["Total Return", f"{analytics.total_return():.2%}"],
         ["CAGR", f"{analytics.annualized_return():.2%}"],
-        ["Sharpe", f"{analytics.sharpe_ratio():.2f}"],
-        ["Sortino", f"{analytics.sortino_ratio():.2f}"],
-        ["Max Drawdown", f"{analytics.max_drawdown():.2%}"],
         ["Calmar", f"{analytics.calmar_ratio():.2f}"],
-        ["Total Trades", f"{len(analytics.trades)}"],
+        ["Total trades", f"{len(analytics.trades)}"],
     ]
     if analytics.beta() is not None:
         rows += [["Beta", f"{analytics.beta():.2f}"], ["Alpha (ann.)", f"{analytics.alpha():.2%}"]]
@@ -366,7 +423,7 @@ def _header() -> html.Header:
             html.Div(
                 className="app-header__brand",
                 children=[
-                    html.Span("QUANT", className="app-header__mark"),
+                    html.Img(src=_LOGO_DATA_URI, className="app-header__logo", alt="Portfolio Lab"),
                     html.Div(
                         children=[
                             html.P("Portfolio Lab", className="app-header__title"),
@@ -380,12 +437,17 @@ def _header() -> html.Header:
             ),
             html.Div(
                 className="app-header__status",
-                title="Data source mode",
+                title=(
+                    "This demo runs on bundled historical sample data, so results "
+                    "always render (it is not a live market feed)."
+                    if offline
+                    else "Results use market data fetched from yfinance at run time."
+                ),
                 children=[
                     html.Span(
-                        className="status-dot status-dot--offline" if offline else "status-dot"
+                        className="status-dot status-dot--sample" if offline else "status-dot"
                     ),
-                    html.Span("Offline (sample data)" if offline else "Live data"),
+                    html.Span("Sample data" if offline else "Market data"),
                 ],
             ),
         ],
@@ -398,72 +460,84 @@ def _sidebar() -> html.Aside:
         children=[
             html.Div("Controls", className="sidebar__heading"),
             html.Div(
-              className="sidebar__body",
-              children=[
-            _control_group(
-                "Universe & Window",
-                [
-                    _field(
-                        "Tickers",
-                        dcc.Input(id="tickers", value="AAPL, MSFT, JPM, AMZN", type="text"),
-                        "Comma-separated symbols, e.g. AAPL, MSFT, JPM",
+                className="sidebar__body",
+                children=[
+                    _control_group(
+                        "Universe & Window",
+                        [
+                            _field(
+                                "Tickers",
+                                dcc.Input(id="tickers", value="AAPL, MSFT, JPM, AMZN", type="text"),
+                                "Comma-separated symbols, e.g. AAPL, MSFT, JPM",
+                            ),
+                            _field(
+                                "Start date", dcc.Input(id="start", value="2020-01-01", type="text")
+                            ),
+                            _field(
+                                "End date", dcc.Input(id="end", value="2024-01-01", type="text")
+                            ),
+                            _field(
+                                "Risk-free rate",
+                                dcc.Input(
+                                    id="rf", value=0.02, type="number", step=0.005, min=0, max=0.2
+                                ),
+                                "Annual, decimal (0.02 = 2%). Used for Sharpe.",
+                            ),
+                        ],
                     ),
-                    _field("Start date", dcc.Input(id="start", value="2020-01-01", type="text")),
-                    _field("End date", dcc.Input(id="end", value="2024-01-01", type="text")),
-                    _field(
-                        "Risk-free rate",
-                        dcc.Input(id="rf", value=0.02, type="number", step=0.005, min=0, max=0.2),
-                        "Annual, decimal (0.02 = 2%). Used for Sharpe.",
+                    _control_group(
+                        "Strategy",
+                        [
+                            _field(
+                                "Objective",
+                                dcc.Dropdown(
+                                    id="objective",
+                                    value="sharpe",
+                                    clearable=False,
+                                    className="dash-dropdown",
+                                    options=objective_options(),
+                                ),
+                                "What the optimizer maximizes/targets at each rebalance.",
+                            ),
+                            _field(
+                                "Position constraints",
+                                dcc.Checklist(
+                                    id="allow-short",
+                                    options=[{"label": " Allow short selling", "value": "short"}],
+                                    value=[],  # default off = long-only (unchanged behavior)
+                                ),
+                                "Off = long-only (default). On = signed positions permitted.",
+                            ),
+                        ],
                     ),
+                    _control_group(
+                        "Rebalance",
+                        [
+                            html.Div(
+                                className="hint",
+                                children="Walk-forward: 252-day lookback, rebalanced every 21 "
+                                "trading days, $100,000 initial capital, benchmarked vs. SPY.",
+                            )
+                        ],
+                    ),
+                    html.Button("Run analysis", id="run", n_clicks=0, className="btn-run"),
                 ],
             ),
-            _control_group(
-                "Strategy",
-                [
-                    _field(
-                        "Objective",
-                        dcc.Dropdown(
-                            id="objective",
-                            value="sharpe",
-                            clearable=False,
-                            className="dash-dropdown",
-                            options=objective_options(),
-                        ),
-                        "What the optimizer maximizes/targets at each rebalance.",
-                    ),
-                    _field(
-                        "Position constraints",
-                        dcc.Checklist(
-                            id="allow-short",
-                            options=[{"label": " Allow short selling", "value": "short"}],
-                            value=[],  # default off = long-only (unchanged behavior)
-                        ),
-                        "Off = long-only (default). On = signed positions permitted.",
-                    ),
-                ],
-            ),
-            _control_group(
-                "Rebalance",
-                [
-                    html.Div(
-                        className="hint",
-                        children="Walk-forward: 252-day lookback, rebalanced every 21 "
-                        "trading days, $100,000 initial capital, benchmarked vs. SPY.",
-                    )
-                ],
-            ),
-            html.Button("Run analysis", id="run", n_clicks=0, className="btn-run"),
-              ]),
             html.Div(id="status", className="status-line"),
         ],
     )
 
 
-def _empty_state(title: str, body: str) -> html.Div:
-    return html.Div(
-        className="empty-state",
-        children=[html.H4(title), html.Div(body)],
-    )
+def _empty_state(title: str, body: str, steps: list[str] | None = None) -> html.Div:
+    children = [html.H4(title), html.Div(body)]
+    if steps:
+        children.append(
+            html.Ol(
+                className="empty-state__steps",
+                children=[html.Li(s) for s in steps],
+            )
+        )
+    return html.Div(className="empty-state", children=children)
 
 
 def _placeholder_figure(message: str = "No results to display.") -> go.Figure:
@@ -476,7 +550,7 @@ def _placeholder_figure(message: str = "No results to display.") -> go.Figure:
     """
     fig = go.Figure(layout=go.Layout(template=_TPL))
     fig.update_layout(
-        height=320,
+        height=240,
         xaxis=dict(visible=False),
         yaxis=dict(visible=False),
         margin=dict(l=24, r=24, t=24, b=24),
@@ -488,7 +562,7 @@ def _placeholder_figure(message: str = "No results to display.") -> go.Figure:
                 x=0.5,
                 y=0.5,
                 showarrow=False,
-                font=dict(size=13, color="#5a6678"),  # --ink-soft: ≥4.5:1 on white
+                font=dict(size=13, color="#71757e"),  # --ink-faint: ≥4.5:1 on white
             )
         ],
     )
@@ -496,7 +570,15 @@ def _placeholder_figure(message: str = "No results to display.") -> go.Figure:
 
 
 def build_app() -> Dash:
-    app = Dash(__name__, title="Portfolio Lab — Optimizer + Backtester")
+    app = Dash(
+        __name__,
+        title="Portfolio Lab — Optimizer + Backtester",
+        external_stylesheets=[
+            "https://fonts.googleapis.com/css2?"
+            "family=Hanken+Grotesk:wght@400;500;600;700&"
+            "family=Spline+Sans+Mono:wght@400;500;600&display=swap"
+        ],
+    )
     app.layout = html.Div(
         children=[
             _header(),
@@ -510,7 +592,7 @@ def build_app() -> Dash:
                             html.Div(id="alert"),
                             dcc.Loading(
                                 type="default",
-                                color=NAVY,
+                                color=ACCENT,
                                 children=dcc.Tabs(
                                     [
                                         dcc.Tab(
@@ -542,8 +624,15 @@ def build_app() -> Dash:
                                                             style={"flex": 1},
                                                             children=_empty_state(
                                                                 "No analysis yet",
-                                                                "Set inputs on the left, then "
-                                                                "press Run analysis.",
+                                                                "Optimized weights and risk "
+                                                                "metrics appear here once you run.",
+                                                                steps=[
+                                                                    "Enter tickers and a date "
+                                                                    "window.",
+                                                                    "Pick an optimization "
+                                                                    "objective.",
+                                                                    "Press Run analysis.",
+                                                                ],
                                                             ),
                                                         ),
                                                     ],
@@ -571,10 +660,6 @@ def build_app() -> Dash:
                                                 ),
                                                 html.Div(id="headline"),
                                                 html.Div(
-                                                    id="bt-metrics",
-                                                    style={"maxWidth": "460px"},
-                                                ),
-                                                html.Div(
                                                     className="panel",
                                                     children=dcc.Graph(
                                                         id="equity",
@@ -594,6 +679,10 @@ def build_app() -> Dash:
                                                         ),
                                                         config={"displayModeBar": False},
                                                     ),
+                                                ),
+                                                html.Div(
+                                                    id="bt-metrics",
+                                                    style={"maxWidth": "520px"},
                                                 ),
                                             ],
                                         ),
@@ -674,7 +763,7 @@ def build_app() -> Dash:
 
         chosen = analysis["results"][key]
         return (
-            frontier_figure(analysis["frontier"], analysis["results"]),
+            frontier_figure(analysis["frontier"], analysis["results"], chosen=key),
             weights_figure(chosen, tickers),
             [
                 html.Div("Optimized portfolio", className="panel__title"),
@@ -684,7 +773,7 @@ def build_app() -> Dash:
             equity_figure(analytics),
             drawdown_figure(analytics),
             [
-                html.Div("Out-of-sample backtest", className="panel__title"),
+                html.Div("Additional metrics", className="panel__title"),
                 _table(backtest_metric_rows(analytics)),
             ],
             None,  # clear any prior alert on success
