@@ -40,8 +40,9 @@ body {
 }
 
 ::selection {
-  background: var(--accent);
-  color: var(--paper);
+  /* Tinted accent wash, dark text preserved — on-brand without the alarm-red fill */
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  color: var(--ink);
 }
 
 #app {
