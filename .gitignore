@@ -48,3 +48,7 @@ data/
 
 # ---- Claude Code agent system (local tooling; contains machine-specific abs paths) ----
 .claude/
+
+# ---- Playwright MCP / debug screenshots ----
+.playwright-mcp/
+*.png

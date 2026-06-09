@@ -27,7 +27,7 @@ class RedisCache:
     async def set_latest_price(self, symbol: str, price: float, timestamp: datetime) -> None:
         """Cache the latest price for a symbol."""
         assert self._client is not None, "connect() must be called first"
-        await self._client.hset(
+        await self._client.hset(  # type: ignore[misc]
             f"price:{symbol}",
             mapping={"price": str(price), "timestamp": timestamp.isoformat()},
         )
@@ -35,7 +35,7 @@ class RedisCache:
     async def get_latest_price(self, symbol: str) -> dict | None:
         """Retrieve the latest cached price."""
         assert self._client is not None, "connect() must be called first"
-        data = await self._client.hgetall(f"price:{symbol}")
+        data = await self._client.hgetall(f"price:{symbol}")  # type: ignore[misc]
         if data:
             return {"price": float(data["price"]), "timestamp": data["timestamp"]}
         return None
@@ -44,14 +44,14 @@ class RedisCache:
         """Append trade to a capped list."""
         assert self._client is not None, "connect() must be called first"
         key = f"trades:{symbol}"
-        await self._client.lpush(key, json.dumps(trade_data, default=str))
-        await self._client.ltrim(key, 0, max_length - 1)
+        await self._client.lpush(key, json.dumps(trade_data, default=str))  # type: ignore[misc]
+        await self._client.ltrim(key, 0, max_length - 1)  # type: ignore[misc]
 
     async def get_recent_trades(self, symbol: str, count: int = 100) -> list[dict]:
         """Retrieve recent trades from cache."""
         assert self._client is not None, "connect() must be called first"
         key = f"trades:{symbol}"
-        raw = await self._client.lrange(key, 0, count - 1)
+        raw = await self._client.lrange(key, 0, count - 1)  # type: ignore[misc]
         return [json.loads(item) for item in raw]
 
     async def set_book(self, symbol: str, book_data: dict) -> None:

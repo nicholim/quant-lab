@@ -348,10 +348,13 @@ def _field(label: str, control, hint: str | None = None) -> html.Div:
     return html.Div(className="field", children=children)
 
 
-def _control_group(legend: str, children: list) -> html.Fieldset:
-    return html.Fieldset(
+def _control_group(legend: str, children: list) -> html.Div:
+    return html.Div(
         className="control-group",
-        children=[html.Legend(legend, className="control-group__legend"), *children],
+        children=[
+            html.Div(legend, className="control-group__legend"),
+            html.Div(className="control-group__body", children=children),
+        ],
     )
 
 
@@ -393,7 +396,10 @@ def _sidebar() -> html.Aside:
     return html.Aside(
         className="sidebar",
         children=[
-            html.H3("Controls"),
+            html.Div("Controls", className="sidebar__heading"),
+            html.Div(
+              className="sidebar__body",
+              children=[
             _control_group(
                 "Universe & Window",
                 [
@@ -447,6 +453,7 @@ def _sidebar() -> html.Aside:
                 ],
             ),
             html.Button("Run analysis", id="run", n_clicks=0, className="btn-run"),
+              ]),
             html.Div(id="status", className="status-line"),
         ],
     )
