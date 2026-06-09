@@ -1,138 +1,215 @@
 import "./style.css";
-import { projects, GITHUB_OWNER } from "./projects.js";
+import { projects, REPO_URL } from "./projects.js";
 
-const githubUrl = (repo) => `https://github.com/${GITHUB_OWNER}/${repo}`;
+// All projects live in one monorepo — deep-link into each project's subtree.
+const githubUrl = (p) => `${REPO_URL}/tree/main/${p.path}`;
 
-function badge(text) {
-  const el = document.createElement("span");
-  el.className = "badge";
-  el.textContent = text;
-  return el;
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
 }
 
-function renderCard(p) {
-  const card = document.createElement("article");
-  card.className = "card";
+function chip(text, variant) {
+  const c = el("span", `chip${variant ? ` chip--${variant}` : ""}`, text);
+  return c;
+}
+
+function renderCard(p, index) {
+  const card = el("article", "card");
   card.id = p.repo;
 
+  // Top row: index + live/static status dot
+  const top = el("div", "card__top");
+  top.appendChild(el("span", "card__index", String(index + 1).padStart(2, "0")));
+  const status = el(
+    "span",
+    `card__status${p.liveDemo ? " is-live" : ""}`,
+    p.liveDemo ? "Live demo" : "Library"
+  );
+  top.appendChild(status);
+  card.appendChild(top);
+
   // Header
-  const header = document.createElement("div");
-  header.className = "card-header";
-  const h2 = document.createElement("h2");
-  h2.textContent = p.title;
-  const tagline = document.createElement("p");
-  tagline.className = "tagline";
-  tagline.textContent = p.tagline;
-  header.append(h2, tagline);
+  const header = el("div", "card__header");
+  header.appendChild(el("h2", "card__title", p.title));
+  header.appendChild(el("p", "card__tagline", p.tagline));
+  card.appendChild(header);
 
-  // Stack badges
-  const badges = document.createElement("div");
-  badges.className = "badges";
-  p.stack.forEach((s) => badges.appendChild(badge(s)));
+  // Summary
+  card.appendChild(el("p", "card__summary", p.summary));
 
-  // Description
-  const desc = document.createElement("p");
-  desc.className = "desc";
-  desc.textContent = p.description;
-
-  // Versus positioning
-  const versus = document.createElement("p");
-  versus.className = "versus";
-  const vsLabel = document.createElement("strong");
-  vsLabel.textContent = `vs ${p.versus.vs}: `;
-  versus.append(vsLabel, document.createTextNode(p.versus.note));
-
-  // Optional static artifact (order-book-simulator)
-  let artifactEl = null;
-  if (p.artifact) {
-    artifactEl = document.createElement("img");
-    artifactEl.className = "artifact";
-    artifactEl.src = `/${p.artifact}`;
-    artifactEl.alt = `${p.title} — static visualisation`;
-    artifactEl.loading = "lazy";
+  // Metric chips
+  if (p.metrics?.length) {
+    const metrics = el("div", "card__metrics");
+    p.metrics.forEach((m) => metrics.appendChild(chip(m, "metric")));
+    card.appendChild(metrics);
   }
 
-  // Actions
-  const actions = document.createElement("div");
-  actions.className = "actions";
+  // Optional static artifact (order-book-simulator)
+  if (p.artifact) {
+    const figure = el("figure", "card__figure");
+    const img = el("img", "artifact");
+    img.src = `/${p.artifact}`;
+    img.alt = `${p.title} — static depth-chart visualisation`;
+    img.loading = "lazy";
+    figure.appendChild(img);
+    card.appendChild(figure);
+  }
 
-  const gh = document.createElement("a");
-  gh.className = "btn btn-ghost";
-  gh.href = githubUrl(p.repo);
+  // Stack tags
+  const stack = el("div", "card__stack");
+  p.stack.forEach((s) => stack.appendChild(chip(s, "stack")));
+  card.appendChild(stack);
+
+  // Expandable "vs" positioning
+  const details = el("details", "card__versus");
+  const summaryEl = el("summary");
+  summaryEl.append(
+    el("span", "card__versus-label", "vs"),
+    el("span", "card__versus-names", p.versus.vs)
+  );
+  details.appendChild(summaryEl);
+  details.appendChild(el("p", "card__versus-note", p.versus.note));
+  card.appendChild(details);
+
+  // Actions
+  const actions = el("div", "card__actions");
+
+  const gh = el("a", "btn btn--ghost");
+  gh.href = githubUrl(p);
   gh.target = "_blank";
   gh.rel = "noopener noreferrer";
-  gh.textContent = "GitHub";
+  gh.append(githubIcon(), document.createTextNode("Code"));
   actions.appendChild(gh);
 
   if (p.liveDemo) {
-    const demo = document.createElement("a");
-    demo.className = "btn btn-primary";
+    const demo = el("a", "btn btn--primary");
     demo.href = p.demoUrl;
     demo.target = "_blank";
     demo.rel = "noopener noreferrer";
-    demo.textContent = "Live demo";
-    // Mark as a placeholder until the user fills in the real Render URL.
-    demo.dataset.todo = "true";
-    demo.title = "TODO: replace placeholder Render URL after deploy";
+    demo.append(document.createTextNode("Live demo"), arrowIcon());
     actions.appendChild(demo);
-
-    const todo = document.createElement("span");
-    todo.className = "todo-pill";
-    todo.textContent = "demo URL = TODO";
-    actions.appendChild(todo);
-  } else {
-    const noDemo = document.createElement("span");
-    noDemo.className = "no-demo";
-    noDemo.textContent = "Static artifact (not a hosted service)";
-    actions.appendChild(noDemo);
+  } else if (p.demoStatus) {
+    actions.appendChild(el("span", "card__note", p.demoStatus));
   }
 
-  // Demo note
-  let note = null;
-  if (p.demoNote) {
-    note = document.createElement("p");
-    note.className = "demo-note";
-    note.textContent = p.demoNote;
-  }
-
-  card.append(header, badges, desc, versus);
-  if (artifactEl) card.appendChild(artifactEl);
   card.appendChild(actions);
-  if (note) card.appendChild(note);
   return card;
+}
+
+function githubIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "15");
+  svg.setAttribute("height", "15");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("btn__icon");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("fill", "currentColor");
+  path.setAttribute(
+    "d",
+    "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+  );
+  svg.appendChild(path);
+  return svg;
+}
+
+function arrowIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("btn__icon", "btn__icon--arrow");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.75");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("d", "M4.5 11.5 11.5 4.5M6 4.5h5.5V10");
+  svg.appendChild(path);
+  return svg;
+}
+
+function renderHero() {
+  const hero = el("header", "hero");
+
+  const eyebrow = el("div", "hero__eyebrow");
+  eyebrow.append(el("span", "hero__pulse"), document.createTextNode("Quantitative engineering"));
+  hero.appendChild(eyebrow);
+
+  const h1 = el("h1", "hero__title");
+  h1.append(
+    document.createTextNode("Five focused tools for "),
+    el("span", "hero__accent", "systematic trading"),
+    document.createTextNode(".")
+  );
+  hero.appendChild(h1);
+
+  hero.appendChild(
+    el(
+      "p",
+      "hero__subtitle",
+      "A backtester, a market-data pipeline, an options pricer, a C++ order-book matching " +
+        "engine, and a portfolio optimizer — each built to do one thing well, with tests, " +
+        "benchmarks, and a runnable demo."
+    )
+  );
+
+  const stats = el("div", "hero__stats");
+  const statData = [
+    ["5", "projects"],
+    ["2", "languages"],
+    ["3", "live demos"],
+    ["100%", "open source"],
+  ];
+  statData.forEach(([num, label]) => {
+    const stat = el("div", "stat");
+    stat.appendChild(el("span", "stat__num", num));
+    stat.appendChild(el("span", "stat__label", label));
+    stats.appendChild(stat);
+  });
+  hero.appendChild(stats);
+
+  const gh = el("a", "btn btn--ghost hero__cta");
+  gh.href = REPO_URL;
+  gh.target = "_blank";
+  gh.rel = "noopener noreferrer";
+  gh.append(githubIcon(), document.createTextNode("View the monorepo"));
+  hero.appendChild(gh);
+
+  return hero;
+}
+
+function renderFooter() {
+  const footer = el("footer", "footer");
+  const line = el("p", "footer__line");
+  line.append(document.createTextNode("Five projects, one monorepo — "));
+  const a = el("a");
+  a.href = REPO_URL;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.textContent = "nicholim/quant-lab";
+  line.appendChild(a);
+  line.append(document.createTextNode("."));
+  footer.appendChild(line);
+  return footer;
 }
 
 function init() {
   const app = document.getElementById("app");
+  app.appendChild(renderHero());
 
-  const hero = document.createElement("header");
-  hero.className = "hero";
-  hero.innerHTML = `
-    <h1>Quant Engineering Portfolio</h1>
-    <p class="subtitle">
-      Five focused quantitative-finance projects — a backtester, a market-data pipeline,
-      an options pricer, an order-book matching engine, and a portfolio optimizer.
-    </p>
-    <p class="meta">
-      Static showcase hosted on Netlify · runnable apps on Render ·
-      source on <a href="https://github.com/${GITHUB_OWNER}" target="_blank" rel="noopener noreferrer">GitHub</a>
-    </p>
-  `;
+  const grid = el("section", "grid");
+  projects.forEach((p, i) => grid.appendChild(renderCard(p, i)));
+  app.appendChild(grid);
 
-  const grid = document.createElement("section");
-  grid.className = "grid";
-  projects.forEach((p) => grid.appendChild(renderCard(p)));
-
-  const footer = document.createElement("footer");
-  footer.className = "footer";
-  footer.innerHTML = `
-    <p>
-      "Live demo" buttons point at placeholder Render URLs
-      (<code>&lt;repo&gt;.onrender.com</code>) until the services are deployed.
-    </p>
-  `;
-
-  app.append(hero, grid, footer);
+  app.appendChild(renderFooter());
 }
 
 init();
