@@ -17,8 +17,8 @@ function arrow() {
   return s;
 }
 
-const FRONTIER_SVG = `
-<svg viewBox="0 0 240 184" role="img" aria-label="An efficient frontier with the capital market line tangent at the maximum-Sharpe portfolio.">
+const EQUITY_SVG = `
+<svg viewBox="0 0 240 184" role="img" aria-label="A backtest equity curve: a systematic strategy's cumulative return rising through drawdowns, above a flatter benchmark line.">
   <line x1="34" y1="16" x2="34" y2="156" stroke="currentColor" stroke-opacity="0.35" stroke-width="1"/>
   <line x1="34" y1="156" x2="226" y2="156" stroke="currentColor" stroke-opacity="0.35" stroke-width="1"/>
   <g stroke="currentColor" stroke-opacity="0.16" stroke-dasharray="2 5">
@@ -26,12 +26,15 @@ const FRONTIER_SVG = `
     <line x1="34" y1="84" x2="226" y2="84"/>
     <line x1="34" y1="48" x2="226" y2="48"/>
   </g>
-  <path d="M58 140 C 80 96, 96 70, 128 56 C 162 41, 196 35, 220 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-  <line x1="34" y1="138" x2="150" y2="60" stroke="var(--accent)" stroke-width="1.5"/>
-  <circle cx="150" cy="60" r="4.5" fill="var(--accent)"/>
-  <text x="158" y="58" font-family="var(--font-mono)" font-size="10" fill="var(--accent)">max Sharpe</text>
-  <text x="40" y="172" font-family="var(--font-mono)" font-size="9.5" fill="currentColor" fill-opacity="0.5">risk &#8594;</text>
-  <text x="34" y="12" font-family="var(--font-mono)" font-size="9.5" fill="currentColor" fill-opacity="0.5" text-anchor="middle">return</text>
+  <polyline fill="none" stroke="currentColor" stroke-opacity="0.32" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"
+    points="40,150 72,143 104,135 136,127 168,118 200,109 224,103"/>
+  <polyline fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"
+    points="40,150 56,139 70,130 84,121 94,128 108,112 124,97 140,84 152,93 168,73 186,59 206,47 224,40"/>
+  <circle cx="224" cy="40" r="4.5" fill="var(--accent)"/>
+  <text x="118" y="68" font-family="var(--font-mono)" font-size="10" fill="var(--accent)">strategy</text>
+  <text x="150" y="132" font-family="var(--font-mono)" font-size="9.5" fill="currentColor" fill-opacity="0.5">benchmark</text>
+  <text x="40" y="172" font-family="var(--font-mono)" font-size="9.5" fill="currentColor" fill-opacity="0.5">time &#8594;</text>
+  <text x="34" y="12" font-family="var(--font-mono)" font-size="9.5" fill="currentColor" fill-opacity="0.5" text-anchor="middle">equity</text>
 </svg>`;
 
 function renderMasthead() {
@@ -39,7 +42,7 @@ function renderMasthead() {
 
   const figure = el("div", "masthead__figure");
   figure.setAttribute("aria-hidden", "false");
-  figure.innerHTML = FRONTIER_SVG;
+  figure.innerHTML = EQUITY_SVG;
   head.appendChild(figure);
 
   const block = el("div", "masthead__block");
