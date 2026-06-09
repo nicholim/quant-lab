@@ -52,7 +52,7 @@ export const projects = [
         "or a standalone storage engine.",
     },
     liveDemo: false,
-    demoStatus: "Background worker — no public web UI",
+    demoStatus: "Background worker, no public web UI",
     demoNote:
       "Background worker on Render (Docker). Runs locally via `make run-market-data`, with a " +
       "Streamlit monitor via `make run-market-monitor`.",
@@ -66,7 +66,7 @@ export const projects = [
       "Black-Scholes-Merton and binomial-tree (European + American) pricing with the five Greeks, " +
       "higher-order Greeks (vanna/volga/charm), a Black-76 futures pricer, a Newton-Raphson IV " +
       "solver, and a vectorized batch API that prices real live option chains from free data.",
-    metrics: ["5 Greeks + higher-order", "European + American", "Live IV surface"],
+    metrics: ["Five Greeks", "Live IV surface", "European + American"],
     stack: ["Python 3.10+", "NumPy/SciPy", "Streamlit", "Plotly"],
     versus: {
       vs: "QuantLib / py_vollib / mibian",
@@ -99,9 +99,9 @@ export const projects = [
         "Python-drivable via pybind11.",
     },
     liveDemo: false,
-    demoStatus: "Native library — static depth chart below",
+    demoStatus: "Native library; static depth chart below",
     demoNote:
-      "Not a hosted service — a native library + simulator. Shown here via a static depth-chart " +
+      "Not a hosted service: a native library and simulator. Shown here via a static depth-chart " +
       "visualisation. A browser-runnable WASM build is future work.",
     artifact: "orderbook-depth.svg",
   },
@@ -111,16 +111,16 @@ export const projects = [
     title: "Portfolio Optimization Engine",
     tagline: "Modern Portfolio Theory optimizer (library + CLI + API).",
     summary:
-      "Mean-variance / MPT optimization — max Sharpe, min volatility, risk parity, max Sortino, " +
-      "min CVaR, target return/vol, a true solved efficient frontier, Hierarchical Risk Parity, " +
-      "Black-Litterman views, and Ledoit-Wolf shrinkage — on a numpy/scipy-only stack (no cvxpy).",
-    metrics: ["Max Sharpe · HRP · B-L", "Solved frontier", "numpy/scipy only"],
+      "Mean-variance / MPT optimization (max Sharpe, min volatility, risk parity, max Sortino, " +
+      "min CVaR, target return/vol), a true solved efficient frontier, Hierarchical Risk Parity, " +
+      "Black-Litterman views, and Ledoit-Wolf shrinkage, all on a numpy/scipy-only stack (no cvxpy).",
+    metrics: ["Max Sharpe · HRP", "Solved frontier", "numpy/scipy only"],
     stack: ["Python 3.10+", "scipy", "pandas", "FastAPI"],
     versus: {
       vs: "PyPortfolioOpt / riskfolio-lib / skfolio / cvxpy",
       note:
-        "A focused, well-tested MPT optimizer — HRP, Black-Litterman, Ledoit-Wolf, and a solved " +
-        "frontier on a numpy/scipy-only stack (no cvxpy) — reused by the backtester, plus a thin " +
+        "A focused, well-tested MPT optimizer (HRP, Black-Litterman, Ledoit-Wolf, and a solved " +
+        "frontier on a numpy/scipy-only stack, no cvxpy) reused by the backtester, plus a thin " +
         "FastAPI demo, rather than a broad convex-optimization toolkit.",
     },
     liveDemo: true,

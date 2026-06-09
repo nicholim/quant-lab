@@ -11,205 +11,163 @@ function el(tag, className, text) {
   return node;
 }
 
-function chip(text, variant) {
-  const c = el("span", `chip${variant ? ` chip--${variant}` : ""}`, text);
-  return c;
+function arrow() {
+  const s = el("span", "arrow", "→");
+  s.setAttribute("aria-hidden", "true");
+  return s;
 }
 
-function renderCard(p, index) {
-  const card = el("article", "card");
-  card.id = p.repo;
+const FRONTIER_SVG = `
+<svg viewBox="0 0 240 184" role="img" aria-label="An efficient frontier with the capital market line tangent at the maximum-Sharpe portfolio.">
+  <line x1="34" y1="16" x2="34" y2="156" stroke="currentColor" stroke-opacity="0.35" stroke-width="1"/>
+  <line x1="34" y1="156" x2="226" y2="156" stroke="currentColor" stroke-opacity="0.35" stroke-width="1"/>
+  <g stroke="currentColor" stroke-opacity="0.16" stroke-dasharray="2 5">
+    <line x1="34" y1="120" x2="226" y2="120"/>
+    <line x1="34" y1="84" x2="226" y2="84"/>
+    <line x1="34" y1="48" x2="226" y2="48"/>
+  </g>
+  <path d="M58 140 C 80 96, 96 70, 128 56 C 162 41, 196 35, 220 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  <line x1="34" y1="138" x2="150" y2="60" stroke="var(--accent)" stroke-width="1.5"/>
+  <circle cx="150" cy="60" r="4.5" fill="var(--accent)"/>
+  <text x="158" y="58" font-family="var(--font-mono)" font-size="10" fill="var(--accent)">max Sharpe</text>
+  <text x="40" y="172" font-family="var(--font-mono)" font-size="9.5" fill="currentColor" fill-opacity="0.5">risk &#8594;</text>
+  <text x="34" y="12" font-family="var(--font-mono)" font-size="9.5" fill="currentColor" fill-opacity="0.5" text-anchor="middle">return</text>
+</svg>`;
 
-  // Top row: index + live/static status dot
-  const top = el("div", "card__top");
-  top.appendChild(el("span", "card__index", String(index + 1).padStart(2, "0")));
-  const status = el(
-    "span",
-    `card__status${p.liveDemo ? " is-live" : ""}`,
-    p.liveDemo ? "Live demo" : "Library"
-  );
-  top.appendChild(status);
-  card.appendChild(top);
+function renderMasthead() {
+  const head = el("header", "masthead");
 
-  // Header
-  const header = el("div", "card__header");
-  header.appendChild(el("h2", "card__title", p.title));
-  header.appendChild(el("p", "card__tagline", p.tagline));
-  card.appendChild(header);
+  const figure = el("div", "masthead__figure");
+  figure.setAttribute("aria-hidden", "false");
+  figure.innerHTML = FRONTIER_SVG;
+  head.appendChild(figure);
 
-  // Summary
-  card.appendChild(el("p", "card__summary", p.summary));
-
-  // Metric chips
-  if (p.metrics?.length) {
-    const metrics = el("div", "card__metrics");
-    p.metrics.forEach((m) => metrics.appendChild(chip(m, "metric")));
-    card.appendChild(metrics);
-  }
-
-  // Optional static artifact (order-book-simulator)
-  if (p.artifact) {
-    const figure = el("figure", "card__figure");
-    const img = el("img", "artifact");
-    img.src = `/${p.artifact}`;
-    img.alt = `${p.title} — static depth-chart visualisation`;
-    img.loading = "lazy";
-    figure.appendChild(img);
-    card.appendChild(figure);
-  }
-
-  // Stack tags
-  const stack = el("div", "card__stack");
-  p.stack.forEach((s) => stack.appendChild(chip(s, "stack")));
-  card.appendChild(stack);
-
-  // Expandable "vs" positioning
-  const details = el("details", "card__versus");
-  const summaryEl = el("summary");
-  summaryEl.append(
-    el("span", "card__versus-label", "vs"),
-    el("span", "card__versus-names", p.versus.vs)
-  );
-  details.appendChild(summaryEl);
-  details.appendChild(el("p", "card__versus-note", p.versus.note));
-  card.appendChild(details);
-
-  // Actions
-  const actions = el("div", "card__actions");
-
-  const gh = el("a", "btn btn--ghost");
-  gh.href = githubUrl(p);
-  gh.target = "_blank";
-  gh.rel = "noopener noreferrer";
-  gh.append(githubIcon(), document.createTextNode("Code"));
-  actions.appendChild(gh);
-
-  if (p.liveDemo) {
-    const demo = el("a", "btn btn--primary");
-    demo.href = p.demoUrl;
-    demo.target = "_blank";
-    demo.rel = "noopener noreferrer";
-    demo.append(document.createTextNode("Live demo"), arrowIcon());
-    actions.appendChild(demo);
-  } else if (p.demoStatus) {
-    actions.appendChild(el("span", "card__note", p.demoStatus));
-  }
-
-  card.appendChild(actions);
-  return card;
-}
-
-function githubIcon() {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("width", "15");
-  svg.setAttribute("height", "15");
-  svg.setAttribute("aria-hidden", "true");
-  svg.classList.add("btn__icon");
-  const path = document.createElementNS(ns, "path");
-  path.setAttribute("fill", "currentColor");
-  path.setAttribute(
-    "d",
-    "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
-  );
-  svg.appendChild(path);
-  return svg;
-}
-
-function arrowIcon() {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 16 16");
-  svg.setAttribute("width", "14");
-  svg.setAttribute("height", "14");
-  svg.setAttribute("aria-hidden", "true");
-  svg.classList.add("btn__icon", "btn__icon--arrow");
-  const path = document.createElementNS(ns, "path");
-  path.setAttribute("fill", "none");
-  path.setAttribute("stroke", "currentColor");
-  path.setAttribute("stroke-width", "1.75");
-  path.setAttribute("stroke-linecap", "round");
-  path.setAttribute("stroke-linejoin", "round");
-  path.setAttribute("d", "M4.5 11.5 11.5 4.5M6 4.5h5.5V10");
-  svg.appendChild(path);
-  return svg;
-}
-
-function renderHero() {
-  const hero = el("header", "hero");
-
-  const eyebrow = el("div", "hero__eyebrow");
-  eyebrow.append(el("span", "hero__pulse"), document.createTextNode("Quantitative engineering"));
-  hero.appendChild(eyebrow);
-
-  const h1 = el("h1", "hero__title");
+  const block = el("div", "masthead__block");
+  const h1 = el("h1", "masthead__title");
   h1.append(
     document.createTextNode("Five focused tools for "),
-    el("span", "hero__accent", "systematic trading"),
+    el("em", "masthead__em", "systematic trading"),
     document.createTextNode(".")
   );
-  hero.appendChild(h1);
+  block.appendChild(h1);
 
-  hero.appendChild(
+  block.appendChild(
     el(
       "p",
-      "hero__subtitle",
-      "A backtester, a market-data pipeline, an options pricer, a C++ order-book matching " +
-        "engine, and a portfolio optimizer — each built to do one thing well, with tests, " +
-        "benchmarks, and a runnable demo."
+      "masthead__lede",
+      "An event-driven backtester, a market-data pipeline, an options pricer, a C++ " +
+        "order-book matching engine, and a portfolio optimizer. Each does one job in a " +
+        "trading stack and does it properly: tested, benchmarked, and runnable."
     )
   );
 
-  const stats = el("div", "hero__stats");
-  const statData = [
-    ["5", "projects"],
-    ["2", "languages"],
-    ["3", "live demos"],
-    ["100%", "open source"],
-  ];
-  statData.forEach(([num, label]) => {
-    const stat = el("div", "stat");
-    stat.appendChild(el("span", "stat__num", num));
-    stat.appendChild(el("span", "stat__label", label));
-    stats.appendChild(stat);
-  });
-  hero.appendChild(stats);
+  const meta = el("p", "masthead__meta");
+  const repo = el("a", "masthead__repo");
+  repo.href = REPO_URL;
+  repo.target = "_blank";
+  repo.rel = "noopener noreferrer";
+  repo.append(document.createTextNode("nicholim/quant-lab"), arrow());
+  meta.append(
+    repo,
+    el("span", "masthead__sep", "·"),
+    el("span", null, "one monorepo, Python & C++")
+  );
+  block.appendChild(meta);
 
-  const gh = el("a", "btn btn--ghost hero__cta");
-  gh.href = REPO_URL;
-  gh.target = "_blank";
-  gh.rel = "noopener noreferrer";
-  gh.append(githubIcon(), document.createTextNode("View the monorepo"));
-  hero.appendChild(gh);
-
-  return hero;
+  head.appendChild(block);
+  return head;
 }
 
-function renderFooter() {
-  const footer = el("footer", "footer");
-  const line = el("p", "footer__line");
-  line.append(document.createTextNode("Five projects, one monorepo — "));
-  const a = el("a");
-  a.href = REPO_URL;
-  a.target = "_blank";
-  a.rel = "noopener noreferrer";
-  a.textContent = "nicholim/quant-lab";
-  line.appendChild(a);
-  line.append(document.createTextNode("."));
-  footer.appendChild(line);
-  return footer;
+function renderRow(p, index) {
+  const row = el("li", "proj");
+  row.id = p.repo;
+  row.style.setProperty("--i", String(index));
+
+  // --- Main column ---
+  const main = el("div", "proj__main");
+
+  const title = el("h2", "proj__title", p.title);
+  main.appendChild(title);
+
+  main.appendChild(el("p", "proj__tagline", p.tagline));
+  main.appendChild(el("p", "proj__summary", p.summary));
+
+  // Static depth-chart figure (order-book only)
+  if (p.artifact) {
+    const figure = el("figure", "proj__figure");
+    const img = el("img", "depth");
+    img.src = `/${p.artifact}`;
+    img.alt = `${p.title}: cumulative order-book depth, bids in ink and asks in red around the mid price.`;
+    img.loading = "lazy";
+    figure.appendChild(img);
+    figure.appendChild(
+      el("figcaption", "proj__figcaption", "Cumulative book depth — illustrative.")
+    );
+    main.appendChild(figure);
+  }
+
+  // Comparison (expandable)
+  const vs = el("details", "proj__vs");
+  const summary = el("summary", "proj__vs-summary");
+  summary.append(
+    document.createTextNode("Compared to "),
+    el("span", "proj__vs-names", p.versus.vs)
+  );
+  vs.appendChild(summary);
+  vs.appendChild(el("p", "proj__vs-note", p.versus.note));
+  main.appendChild(vs);
+
+  main.appendChild(el("p", "proj__stack", p.stack.join("  ·  ")));
+
+  // --- Rail (mono data + actions) ---
+  const rail = el("aside", "proj__rail");
+
+  const metrics = el("ul", "metrics");
+  p.metrics.forEach((m, mi) => {
+    const li = el("li", mi === 0 ? "metric metric--lead" : "metric", m);
+    metrics.appendChild(li);
+  });
+  rail.appendChild(metrics);
+
+  const status = el(
+    "p",
+    `proj__status${p.liveDemo ? " is-live" : ""}`,
+    p.liveDemo ? "Live demo" : "Library"
+  );
+  rail.appendChild(status);
+
+  const actions = el("div", "proj__actions");
+  if (p.liveDemo) {
+    const demo = el("a", "act act--primary");
+    demo.href = p.demoUrl;
+    demo.target = "_blank";
+    demo.rel = "noopener noreferrer";
+    demo.append(document.createTextNode("Open demo"), arrow());
+    actions.appendChild(demo);
+  } else if (p.demoStatus) {
+    actions.appendChild(el("p", "proj__note", p.demoStatus));
+  }
+
+  const code = el("a", "act act--ghost");
+  code.href = githubUrl(p);
+  code.target = "_blank";
+  code.rel = "noopener noreferrer";
+  code.append(document.createTextNode("View code"), arrow());
+  actions.appendChild(code);
+
+  rail.appendChild(actions);
+
+  row.append(main, rail);
+  return row;
 }
 
 function init() {
   const app = document.getElementById("app");
-  app.appendChild(renderHero());
+  app.appendChild(renderMasthead());
 
-  const grid = el("section", "grid");
-  projects.forEach((p, i) => grid.appendChild(renderCard(p, i)));
-  app.appendChild(grid);
-
-  app.appendChild(renderFooter());
+  const list = el("ol", "ledger");
+  projects.forEach((p, i) => list.appendChild(renderRow(p, i)));
+  app.appendChild(list);
 }
 
 init();
