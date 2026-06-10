@@ -11,13 +11,9 @@ source``), so this exercises it without diluting the ``src`` coverage gate.
 
 import os
 
-import matplotlib
+import pandas as pd
 
-matplotlib.use("Agg")
-
-import pandas as pd  # noqa: E402
-
-import monitor  # noqa: E402
+import monitor
 
 # --- Synthetic-sample data path -------------------------------------------
 

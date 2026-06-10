@@ -1171,7 +1171,11 @@ class TestDashboard:
 
         rows = dashboard.backtest_metric_rows(self._analytics())
         labels = [r[0] for r in rows]
-        assert "Sharpe" in labels and "Beta" in labels  # benchmark present
+        # Beta/Alpha appear when a benchmark is present...
+        assert "Beta" in labels and "Alpha (ann.)" in labels
+        # ...and the table carries the non-headline metrics only (Sharpe, Total
+        # Return, Sortino, Max Drawdown are the KPI cards, not duplicated here).
+        assert "CAGR" in labels and "Sharpe" not in labels
 
     def test_build_app_has_layout(self):
         import dashboard
