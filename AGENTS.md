@@ -17,10 +17,20 @@ the standing rules. Keep it accurate — agents trust it instead of re-discoveri
 
 > Theme the user is driving: **make the monorepo feel production / POC, not educational** —
 > wire REAL live market data (free sources) into the apps and harden them for cloud deploy.
-> **Branch model changed 2026-06-07:** all prior work was merged to `main` and
-> `feature/agent-improvements` was deleted (local + remote). `main` is now the source of truth and IS pushed
-> to `origin` (GitHub `nicholim/quant-lab`). For the NEXT pass, branch fresh off `main`
+> **Branch model (since 2026-06-07):** `main` is the source of truth and IS pushed to `origin`
+> (GitHub `nicholim/quant-lab`). For the NEXT pass, branch fresh off `main`
 > (e.g. `git checkout -b feature/<thing>`) and still **never push without the user's explicit go-ahead.**
+>
+> **LATEST — 2026-06-13: P4 "quant-calculations" round is DONE, squashed, and MERGED+PUSHED to `main`**
+> (commit `95390d4`; `feature/quant-calculations` deleted local+remote). Added the calculations practicing
+> quants use today — 2 additive, contract-safe picks per package, each verified term-by-term against its
+> primary academic source and written up in **`docs/methods/`** (SABR, CN finite-difference, robust
+> covariance + risk attribution, PSR/DSR + trade analytics, microstructure features, Avellaneda–Stoikov).
+> Current test counts: options **271** / portfolio **339** / backtesting **248** / market-data **326** +
+> order-book **53 C++ + 89 py** — all green, gates met, ruff/format/mypy clean, cross-package contract intact.
+> See the 2026-06-13 changelog entry in `IMPROVEMENTS.md` for the per-package detail + the (optional)
+> next-pass candidate list (Heston/exotics, walk-forward OOS + NCO, MC trade-resampling, AFML bars,
+> execution-algo agents).
 
 **Done (2026-06-02): ENTIRE P0/P1/P2 backlog + features wired end-to-end** (hygiene/tests/docs/deploy +
 live-data resilience + all P2 feature-comprehensiveness picks across all 5 packages, reachable from
@@ -58,8 +68,9 @@ package (read-only `feature-architect`), confirm with the user, then implement a
   SABR + arbitrage-free SVI; backtesting multi-asset dashboard analytics + borrow-fee model + `--sweep`; portfolio
   cvxpy cardinality extra.
 
-First action for the user: **push the branch** (`feature/agent-improvements`), then connect Render Blueprint
-+ Netlify. Nothing has been pushed.
+First action for the user: nothing outstanding from the P4 round (already merged + pushed to `main`). The
+remaining open items are the pre-existing deploy steps — connect the Render Blueprint + Netlify — and the
+optional next-pass features listed in the latest banner / `IMPROVEMENTS.md`.
 
 ---
 

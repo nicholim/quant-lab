@@ -12,7 +12,9 @@ a static showcase site.
 
 > **New here?** Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for how it all fits
 > together, or jump to [`docs/getting-started.md`](docs/getting-started.md) for a
-> clone-to-running-in-5-minutes guide.
+> clone-to-running-in-5-minutes guide. For the math behind the quant methods
+> (SABR, finite-difference pricing, robust covariance, PSR/DSR, Avellaneda–Stoikov,
+> microstructure features) see [`docs/methods/`](docs/methods/).
 
 ## Run it (one command)
 
