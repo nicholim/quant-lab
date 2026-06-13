@@ -169,6 +169,124 @@ def alpha(returns, benchmark, risk_free_rate: float = 0.02, periods_per_year: in
     return (ann_r - risk_free_rate) - beta_val * (ann_b - risk_free_rate)
 
 
+_EULER_MASCHERONI = 0.5772156649015329
+
+
+def _normal_cdf(x: float) -> float:
+    """Standard-normal CDF via the error function (no scipy dependency)."""
+    from math import erf, sqrt
+
+    return 0.5 * (1.0 + erf(x / sqrt(2.0)))
+
+
+def probabilistic_sharpe_ratio(
+    observed_sr: float,
+    benchmark_sr: float,
+    n: int,
+    skew: float = 0.0,
+    kurtosis: float = 3.0,
+) -> float:
+    """Probabilistic Sharpe Ratio (Bailey & Lopez de Prado, 2012).
+
+    The probability that the true Sharpe ratio exceeds ``benchmark_sr`` given an
+    ``observed_sr`` estimated from ``n`` returns. All Sharpe ratios must be in the
+    SAME (typically non-annualized, per-period) frequency. The closed form uses
+    the standard error of the SR estimator under non-normal returns::
+
+        sigma_SR = sqrt((1 - skew*SR + (kurtosis - 1)/4 * SR^2) / (n - 1))
+        PSR      = Phi((SR_obs - SR_bench) / sigma_SR)
+
+    Args:
+        observed_sr: estimated Sharpe ratio (same frequency as ``benchmark_sr``).
+        benchmark_sr: Sharpe ratio to beat (often 0).
+        n: number of return observations (must be >= 2).
+        skew: sample skewness of the returns (0 for normal).
+        kurtosis: sample kurtosis of the returns; NON-excess (3.0 for normal).
+
+    Returns:
+        Probability in [0, 1].
+
+    Raises:
+        ValueError: if ``n < 2``.
+    """
+    if n < 2:
+        raise ValueError("n must be >= 2")
+    var = 1.0 - skew * observed_sr + (kurtosis - 1.0) / 4.0 * observed_sr**2
+    # Numerical guard: the variance term can go slightly negative for extreme
+    # skew/kurtosis/SR combinations; clamp to a tiny positive value.
+    var = max(var, 1e-12)
+    sigma_sr = (var / (n - 1)) ** 0.5
+    if sigma_sr < 1e-12:
+        return 1.0 if observed_sr > benchmark_sr else 0.0
+    return _normal_cdf((observed_sr - benchmark_sr) / sigma_sr)
+
+
+def expected_max_sharpe(n_trials: int, sr_variance: float) -> float:
+    """Expected maximum of ``n_trials`` independent Sharpe estimates.
+
+    Gaussian extreme-value approximation (Bailey & Lopez de Prado, 2014) used to
+    derive the deflation benchmark::
+
+        E[max SR] = sqrt(var_SR) * ((1 - gamma) * Phi^-1(1 - 1/N)
+                    + gamma * Phi^-1(1 - 1/(N*e)))
+
+    where ``gamma`` is the Euler-Mascheroni constant and ``var_SR`` is the
+    variance of the SR estimates ACROSS the ``n_trials`` (assumed mean-zero true
+    SRs). For ``n_trials <= 1`` this is 0 (no multiple-testing inflation).
+
+    Args:
+        n_trials: number of independent strategy configurations tried.
+        sr_variance: variance of the trial Sharpe ratios (same frequency as the
+            observed SR fed to :func:`deflated_sharpe_ratio`).
+    """
+    if n_trials <= 1:
+        return 0.0
+    if sr_variance <= 0.0:
+        return 0.0
+    from math import e
+
+    # Inverse normal CDF (probit) via the stdlib, scipy-free: statistics.NormalDist
+    # provides an exact inv_cdf, so no rational approximation is needed.
+    from statistics import NormalDist
+
+    nd = NormalDist()
+    q1 = nd.inv_cdf(1.0 - 1.0 / n_trials)
+    q2 = nd.inv_cdf(1.0 - 1.0 / (n_trials * e))
+    return (sr_variance**0.5) * ((1.0 - _EULER_MASCHERONI) * q1 + _EULER_MASCHERONI * q2)
+
+
+def deflated_sharpe_ratio(
+    observed_sr: float,
+    n: int,
+    n_trials: int,
+    sr_variance: float,
+    skew: float = 0.0,
+    kurtosis: float = 3.0,
+) -> float:
+    """Deflated Sharpe Ratio (Bailey & Lopez de Prado, 2014).
+
+    A PSR whose benchmark is the EXPECTED MAXIMUM Sharpe ratio achievable by
+    pure luck across ``n_trials`` independent backtests. Higher ``n_trials`` ->
+    higher benchmark -> lower DSR, correcting for selection bias in a parameter
+    sweep. With ``n_trials == 1`` this reduces to ``PSR(observed_sr, 0, ...)``.
+
+    Args:
+        observed_sr: Sharpe of the SELECTED (e.g. best) configuration, per-period.
+        n: number of return observations behind ``observed_sr``.
+        n_trials: number of configurations tried (e.g. grid size).
+        sr_variance: variance of the trial Sharpe ratios. Estimate it as the
+            sample variance of the per-period Sharpes of all tried configs; it is
+            the honest input the deflation needs and is the caller's responsibility.
+        skew: sample skewness of the selected config's returns.
+        kurtosis: sample (non-excess) kurtosis of the selected config's returns.
+
+    Returns:
+        Probability in [0, 1]; always <= the corresponding PSR for ``n_trials > 1``.
+    """
+    benchmark_sr = expected_max_sharpe(n_trials, sr_variance)
+    return probabilistic_sharpe_ratio(observed_sr, benchmark_sr, n, skew, kurtosis)
+
+
 def compute_metrics(
     returns,
     benchmark=None,

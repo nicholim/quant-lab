@@ -14,6 +14,9 @@ Both implementations expose the identical normalized schema:
 * ``trades``: ``time, symbol, price, quantity, side, exchange``
 * ``ohlcv``:  ``time, symbol, open, high, low, close, volume, trade_count, interval``
 * ``book``:   ``time, symbol, bids, asks, exchange`` (L2 depth; bids/asks JSON)
+* ``bar_features``: ``time, symbol, buy_volume, sell_volume, imbalance, vwap,
+  interval`` (opt-in trade-flow enrichment; separate table so ``ohlcv`` rows
+  stay byte-identical when the feature is off)
 """
 
 from __future__ import annotations
@@ -58,6 +61,21 @@ class StorageBackend(Protocol):
         OPT-IN: only exercised when a depth feed is enabled; backends store the
         levels as JSON so the schema stays a single wide row per snapshot.
         """
+
+    async def insert_bar_features(self, features: dict) -> None:
+        """Persist one bar-features row (opt-in trade-flow enrichment).
+
+        The dict keys are ``timestamp, symbol, buy_volume, sell_volume,
+        imbalance, vwap, interval`` (built by the pipeline from a
+        :class:`~src.normalizer.BarFeatures` plus the matching bar's
+        symbol/timestamp/interval). OPT-IN: only exercised when
+        ``ENABLE_BAR_FEATURES`` is set.
+        """
+
+    async def query_bar_features(
+        self, symbol: str, interval: str, start: datetime, end: datetime
+    ) -> list[dict]:
+        """Read bar-features rows for ``symbol``/``interval`` in ``[start, end)`` (oldest first)."""
 
     async def query_book(
         self, symbol: str, start: datetime, end: datetime, limit: int = 10000

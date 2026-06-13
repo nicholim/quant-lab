@@ -166,3 +166,190 @@ def ledoit_wolf_shrinkage(
     # enforce exact symmetry against floating-point drift
     shrunk = 0.5 * (shrunk + shrunk.T)
     return shrunk, float(intensity)
+
+
+def ewma_covariance(returns, lam: float = 0.94) -> np.ndarray:
+    """Exponentially-weighted moving-average (RiskMetrics) covariance.
+
+    Recent observations carry more weight: period ``t`` (counting from the most
+    recent row backward) gets weight ``(1 - lam) * lam**k`` where ``k`` is its lag
+    from the end of the sample. This tracks the latest volatility regime more
+    responsively than the equally-weighted sample covariance.
+
+    Parameters
+    ----------
+    returns:
+        A ``(T, n)`` array (or DataFrame) of **per-period** asset returns.
+    lam:
+        Decay factor in ``(0, 1)``. The RiskMetrics default ``0.94`` corresponds
+        to a daily horizon; closer to 1 = slower decay (longer memory).
+
+    Returns
+    -------
+    np.ndarray
+        The ``(n, n)`` EWMA covariance on the same (per-period) scale as
+        ``np.cov(returns, rowvar=False)``. Symmetric by construction.
+    """
+    if not 0.0 < lam < 1.0:
+        raise ValueError("lam must be in the open interval (0, 1)")
+    X = _as_returns_matrix(returns)
+    T, n = X.shape
+    if T < 2:
+        raise ValueError("Need at least 2 observations for EWMA covariance")
+
+    # weights: most recent row (last) gets the largest weight.
+    lags = np.arange(T - 1, -1, -1, dtype=float)
+    w = (1.0 - lam) * lam**lags
+    w /= w.sum()  # normalize so weights sum to 1
+
+    mean = w @ X
+    Xc = X - mean
+    cov = (Xc * w[:, None]).T @ Xc
+    return 0.5 * (cov + cov.T)
+
+
+def oas_shrinkage(returns) -> tuple[np.ndarray, float]:
+    """Oracle Approximating Shrinkage (Chen, Wiesel, Hero 2010), closed form.
+
+    Shrinks the sample covariance toward the scaled identity ``mu * I`` (``mu``
+    the mean variance) with the OAS intensity, which converges to the oracle
+    (minimum-MSE) shrinkage faster than Ledoit-Wolf under Gaussian assumptions.
+
+    Parameters
+    ----------
+    returns:
+        A ``(T, n)`` array (or DataFrame) of **per-period** asset returns.
+
+    Returns
+    -------
+    (shrunk_cov, intensity):
+        ``shrunk_cov = (1 - rho) * S + rho * mu * I`` where ``S`` is the MLE
+        sample covariance and ``rho`` is the OAS intensity clipped to ``[0, 1]``.
+    """
+    X = _as_returns_matrix(returns)
+    T, n = X.shape
+    if T < 2:
+        raise ValueError("Need at least 2 observations for shrinkage")
+
+    mean = X.mean(axis=0)
+    Xc = X - mean
+    S = (Xc.T @ Xc) / T  # MLE sample covariance
+    mu = float(np.trace(S) / n)
+    F = mu * np.eye(n)
+
+    if n == 1:
+        return S.copy(), 0.0
+
+    tr_s2 = float(np.sum(S * S))  # trace(S @ S)
+    tr_s_2 = float(np.trace(S)) ** 2  # (trace S)^2
+
+    # Chen et al. (2010), eq. (23): closed-form OAS intensity.
+    num = (1.0 - 2.0 / n) * tr_s2 + tr_s_2
+    den = (T + 1.0 - 2.0 / n) * (tr_s2 - tr_s_2 / n)
+    if den <= 0:
+        rho = 1.0
+    else:
+        rho = num / den
+    intensity = max(0.0, min(1.0, rho))
+
+    shrunk = (1.0 - intensity) * S + intensity * F
+    shrunk = 0.5 * (shrunk + shrunk.T)
+    return shrunk, float(intensity)
+
+
+def mp_denoise(returns) -> np.ndarray:
+    """Marchenko-Pastur eigenvalue denoising of the covariance.
+
+    Decomposes the *correlation* matrix, replaces the bulk eigenvalues that fall
+    below the Marchenko-Pastur edge ``(1 + sqrt(n / T))**2`` (attributable to
+    estimation noise) with their common mean, then rebuilds the correlation
+    matrix with a unit diagonal (so its trace is preserved) and scales back to a
+    covariance using the original standard deviations. This keeps the
+    signal-carrying top eigenvalues while shrinking the noisy bulk, yielding a
+    better-conditioned, still-PSD estimate.
+
+    Parameters
+    ----------
+    returns:
+        A ``(T, n)`` array (or DataFrame) of **per-period** asset returns with
+        more periods than assets (``T / n > 1``).
+
+    Returns
+    -------
+    np.ndarray
+        The denoised ``(n, n)`` covariance on the same scale as
+        ``np.cov(returns, rowvar=False)``.
+    """
+    X = _as_returns_matrix(returns)
+    T, n = X.shape
+    if T <= n:
+        raise ValueError("mp_denoise requires more periods than assets (T / n > 1)")
+
+    mean = X.mean(axis=0)
+    Xc = X - mean
+    S = (Xc.T @ Xc) / T  # MLE sample covariance
+    std = np.sqrt(np.diag(S))
+    denom = np.outer(std, std)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        corr = np.where(denom > 0, S / denom, 0.0)
+    corr = 0.5 * (corr + corr.T)
+
+    eigvals, eigvecs = np.linalg.eigh(corr)
+
+    q = n / T
+    edge = (1.0 + np.sqrt(q)) ** 2  # Marchenko-Pastur upper edge
+
+    noise = eigvals < edge
+    if noise.any():
+        noise_mean = float(eigvals[noise].mean())
+        eigvals = np.where(noise, noise_mean, eigvals)
+
+    denoised_corr = (eigvecs * eigvals) @ eigvecs.T
+    # rebuild with a unit diagonal so the correlation trace is preserved (== n)
+    d = np.sqrt(np.diag(denoised_corr))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        norm = np.where(np.outer(d, d) > 0, denoised_corr / np.outer(d, d), 0.0)
+    np.fill_diagonal(norm, 1.0)
+
+    cov = norm * denom
+    return 0.5 * (cov + cov.T)
+
+
+# Estimator names accepted by ``estimate_covariance``. The shrinkage targets
+# ("constant_correlation", "identity") remain handled by ``ledoit_wolf_shrinkage``.
+CovEstimator = str  # "sample" | "ewma" | "oas" | "mp"
+
+
+def estimate_covariance(returns, estimator: str = "sample", *, lam: float = 0.94) -> np.ndarray:
+    """Dispatch to a per-period covariance estimator by name.
+
+    Parameters
+    ----------
+    returns:
+        A ``(T, n)`` array (or DataFrame) of **per-period** asset returns.
+    estimator:
+        One of ``"sample"`` (plain MLE-free ``np.cov`` with ddof=1),
+        ``"ewma"``, ``"oas"`` (OAS shrinkage), or ``"mp"`` (Marchenko-Pastur
+        denoising). The shrinkage estimators that return an intensity remain
+        available directly (``oas_shrinkage`` / ``ledoit_wolf_shrinkage``).
+    lam:
+        Decay factor forwarded to the EWMA estimator (ignored otherwise).
+
+    Returns
+    -------
+    np.ndarray
+        The ``(n, n)`` covariance on the same (per-period) scale as
+        ``np.cov(returns, rowvar=False)``.
+    """
+    if estimator == "sample":
+        X = _as_returns_matrix(returns)
+        return np.cov(X, rowvar=False, ddof=1)
+    if estimator == "ewma":
+        return ewma_covariance(returns, lam=lam)
+    if estimator == "oas":
+        return oas_shrinkage(returns)[0]
+    if estimator == "mp":
+        return mp_denoise(returns)
+    raise ValueError(
+        f"Unknown covariance estimator {estimator!r}; use 'sample', 'ewma', 'oas', or 'mp'"
+    )

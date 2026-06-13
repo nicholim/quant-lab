@@ -47,6 +47,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--enable-bar-features",
+        action="store_true",
+        default=False,
+        help=(
+            "Also compute per-bar trade-flow features (buy/sell volume, flow "
+            "imbalance, VWAP) alongside each OHLCV bar (opt-in; overrides "
+            "ENABLE_BAR_FEATURES). Default: plain OHLCV bars only."
+        ),
+    )
+    parser.add_argument(
         "--exchange",
         type=str,
         default=None,
@@ -77,6 +87,8 @@ def build_config(args: argparse.Namespace) -> Config:
         config.exchange = args.exchange.lower()
     if args.enable_depth:
         config.enable_depth = True
+    if args.enable_bar_features:
+        config.enable_bar_features = True
     if args.log_level:
         config.log_level = args.log_level
     return config

@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-285%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-339%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~96%25-brightgreen.svg)](pyproject.toml)
 
 A focused, dependency-light Modern Portfolio Theory optimizer: a true solved efficient frontier,
@@ -41,7 +41,7 @@ graph TD
     OBJ --> O5[Min CVaR]
     OBJ --> O5b[Min CDaR]
     OBJ --> O6[Target ret/vol]
-    RET --> MET[metrics.py<br/>CAGR · DD · Sortino · Calmar<br/>Omega · beta/alpha]
+    RET --> MET[metrics.py<br/>CAGR · DD · Sortino · Calmar<br/>Omega · beta/alpha · PSR/DSR]
     OPT --> MC[Monte Carlo<br/>VaR / CVaR]
     OPT --> VIZ[Visualization]
     RUN --> EXP[export<br/>CSV / JSON]
@@ -60,6 +60,8 @@ graph TD
 
 - **Efficient Frontier** — both a Dirichlet random-portfolio **cloud** (`efficient_frontier`, for the scatter background) and the **true solved frontier** (`solved_efficient_frontier`), which sweeps the min-volatility-at-target-return solve across a return grid to trace the actual convex boundary
 - **Ledoit–Wolf covariance shrinkage** — opt-in (`calculate_returns(shrinkage="constant_correlation" | "identity")`, default **off** for parity), shrinks the noisy sample covariance toward a structured target with the analytically optimal intensity (numpy only, no scikit-learn)
+- **Robust moment estimators** — opt-in named covariance estimators (`calculate_returns(cov_estimator=...)`): **EWMA/RiskMetrics**, **OAS shrinkage** (Chen et al. 2010 closed form), and **Marchenko–Pastur eigenvalue denoising** (trace- and PSD-preserving); plus expected-return estimators (`mean_estimator=...`): **EWMA** and **positive-part James–Stein** shrinkage toward the grand mean. Defaults (`"sample"`/`None`) stay byte-identical to `returns.cov()*252` / `returns.mean()*252` (numpy only, no scikit-learn). Also wired to the CLI (`--cov-estimator`/`--mean-estimator`), the FastAPI `/optimize` body, and the Streamlit UI
+- **Risk attribution** — `risk_attribution(weights, groups=None)` returns an Euler decomposition of portfolio volatility (`weight`, marginal `mcr`, component `ccr`, and `pct_risk`); component contributions sum to σ_p and `pct_risk` sums to 1. Optional sector/group rollup. Surfaced in the console report, the `POST /risk-attribution` endpoint, and a Streamlit "Risk attribution" panel (grouped bar: % risk vs % weight)
 - **Black–Litterman expected returns** — opt-in, blends the market-implied equilibrium prior (reverse optimization `Π = δ Σ w_mkt`) with investor views `P·E[R] = Q` (uncertainty `Ω`, default `diag(τ P Σ Pᵀ)`) via the BL master formula. Use `black_litterman_returns(P, Q, ...)` for the posterior vector, or `optimize_black_litterman(P, Q, ...)` to max-Sharpe on the posterior. With no views the posterior equals the equilibrium prior (numpy only, no PyPortfolioOpt/cvxpy)
 - **Multiple optimization objectives:**
   - **Max Sharpe** — tangency portfolio maximizing risk-adjusted return (SLSQP)
@@ -72,7 +74,7 @@ graph TD
   - **Target-based** — max return for a target volatility, or min volatility for a target return
 - **Flexible constraints** — per-asset and per-group min/max weight bounds, optional shorting
 - **Transaction-cost-aware rebalancing** (opt-in) — pass `current_weights` (the prior allocation, array or ticker-dict) plus `transaction_cost` (scalar or per-asset per-unit-turnover cost) to the SLSQP objectives (`optimize_sharpe`, `optimize_min_volatility`, `optimize_sortino`, and the two target-based solves) to penalize `|w − w_prev|` (L1 turnover). Defaults (`current_weights=None`, `transaction_cost=0.0`) leave every result byte-identical to the cost-free optimum. A backtester could pass its prior rebalance weights to penalize churn between rebalances (no changes to the backtesting package required)
-- **Performance metrics** — CAGR, max drawdown, Sortino, Calmar, Omega, plus beta/alpha vs a benchmark
+- **Performance metrics** — CAGR, max drawdown, Sortino, Calmar, Omega, plus beta/alpha vs a benchmark, and the **Probabilistic & Deflated Sharpe Ratio** (`probabilistic_sharpe_ratio`, `deflated_sharpe_ratio`; Bailey & López de Prado) — closed-form, scipy-free, importable standalone so the backtester applies the DSR multiple-testing correction to its parameter sweeps
 - **Monte Carlo Simulation** — Project portfolio value using geometric Brownian motion with VaR and CVaR estimation
 - **Result export** — write results and metrics to CSV / JSON for downstream tools (e.g. a backtest framework)
 - **Correlation, weights, drawdown & returns visualizations**
@@ -339,7 +341,7 @@ portfolio-optimization-engine/
 ├── render.yaml             # Render Blueprint for the FastAPI demo
 ├── examples/               # Runnable workflows (quickstart_offline.py, black_litterman_demo.py — no network)
 ├── streamlit_app.py        # Streamlit demo UI (input sources, 9 objectives, frontier, Black-Litterman form)
-├── tests/                  # pytest suite (259 tests, ~96% coverage)
+├── tests/                  # pytest suite (327 tests, ~96% coverage)
 └── portfolio_optimization_engine/   # importable package
     ├── optimizer.py         # PortfolioOptimizer (frontier, all objectives, flexible constraints)
     ├── covariance.py        # Ledoit-Wolf shrinkage estimators (opt-in, numpy-only)
@@ -430,7 +432,7 @@ Deploy on Render (Blueprint — `render.yaml` is committed):
 
 ```bash
 pip install -e ".[test]"
-pytest                       # 259 tests, branch coverage gated at 90% (~96% actual)
+pytest                       # 327 tests, branch coverage gated at 90% (~96% actual)
 ruff check . && ruff format --check .
 ```
 

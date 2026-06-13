@@ -109,8 +109,8 @@ def test_app_builds_offline_and_produces_weights():
         at = AppTest.from_file(APP_PATH, default_timeout=60)
         at.run()
         assert not at.exception
-        # The four result tabs are present.
-        assert len(at.tabs) == 4
+        # The five result tabs are present (incl. Risk attribution).
+        assert len(at.tabs) == 5
         # A metric for "Expected return" rendered -> the optimization ran.
         labels = [m.label for m in at.metric]
         assert "Expected return" in labels

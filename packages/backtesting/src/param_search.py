@@ -12,7 +12,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from portfolio_optimization_engine.metrics import deflated_sharpe_ratio
 
+from .analytics import PERIODS_PER_YEAR
 from .backtest import Backtest
 from .data_handler import DataHandler
 from .datastore import DataStore
@@ -46,10 +48,19 @@ def grid_search(
 
     Returns:
         One row per combination: the parameter values plus sharpe, sortino,
-        total_return, max_drawdown, calmar, and total_trades.
+        total_return, max_drawdown, calmar, total_trades, and ``dsr`` — the
+        Deflated Sharpe Ratio. DSR applies the multiple-testing correction the
+        sweep needs: ``n_trials`` is the grid size and the deflation benchmark is
+        the expected-max Sharpe across trials, using the sample variance of the
+        (per-period) trial Sharpes. DSR is the probability the config's true
+        Sharpe beats what this many trials would produce by luck; it is the same
+        for every row (a sweep-level statistic) and is NaN for a single trial.
     """
     keys = list(param_grid)
     rows = []
+    # Collect per-period inputs for the sweep-level Deflated Sharpe Ratio.
+    per_period_sharpes: list[float] = []
+    dsr_inputs: list[dict | None] = []
     for combo_values in itertools.product(*(param_grid[k] for k in keys)):
         combo = dict(zip(keys, combo_values, strict=False))
         strategy = strategy_factory(**combo)
@@ -67,6 +78,25 @@ def grid_search(
             benchmark=benchmark,
         ).run()
 
+        # De-annualized Sharpe + return-series moments feed the DSR closed form.
+        rets = analytics.returns
+        n_obs = int(len(rets))
+        pp_sharpe = analytics.sharpe_ratio() / np.sqrt(PERIODS_PER_YEAR)
+        per_period_sharpes.append(pp_sharpe)
+        if n_obs >= 2:
+            skew = float(pd.Series(rets).skew())
+            kurt = float(pd.Series(rets).kurt()) + 3.0
+            dsr_inputs.append(
+                {
+                    "sr": pp_sharpe,
+                    "n": n_obs,
+                    "skew": 0.0 if np.isnan(skew) else skew,
+                    "kurtosis": 3.0 if np.isnan(kurt) else kurt,
+                }
+            )
+        else:
+            dsr_inputs.append(None)
+
         row = dict(combo)
         row.update(
             {
@@ -80,7 +110,30 @@ def grid_search(
         )
         rows.append(row)
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    n_trials = len(rows)
+    if n_trials > 1:
+        sr_variance = float(np.var(per_period_sharpes, ddof=1))
+        dsr_values = []
+        for inp in dsr_inputs:
+            if inp is None:
+                dsr_values.append(float("nan"))
+            else:
+                dsr_values.append(
+                    deflated_sharpe_ratio(
+                        observed_sr=inp["sr"],
+                        n=inp["n"],
+                        n_trials=n_trials,
+                        sr_variance=sr_variance,
+                        skew=inp["skew"],
+                        kurtosis=inp["kurtosis"],
+                    )
+                )
+        df["dsr"] = dsr_values
+    else:
+        df["dsr"] = float("nan")
+
+    return df
 
 
 def walk_forward(

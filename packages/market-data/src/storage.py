@@ -42,9 +42,22 @@ CREATE TABLE IF NOT EXISTS book (
 
 SELECT create_hypertable('book', 'time', if_not_exists => TRUE);
 
+CREATE TABLE IF NOT EXISTS bar_features (
+    time        TIMESTAMPTZ NOT NULL,
+    symbol      TEXT        NOT NULL,
+    buy_volume  DOUBLE PRECISION NOT NULL,
+    sell_volume DOUBLE PRECISION NOT NULL,
+    imbalance   DOUBLE PRECISION NOT NULL,
+    vwap        DOUBLE PRECISION NOT NULL,
+    interval    TEXT        NOT NULL DEFAULT '1m'
+);
+
+SELECT create_hypertable('bar_features', 'time', if_not_exists => TRUE);
+
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_time ON trades (symbol, time DESC);
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_time ON ohlcv (symbol, time DESC);
 CREATE INDEX IF NOT EXISTS idx_book_symbol_time ON book (symbol, time DESC);
+CREATE INDEX IF NOT EXISTS idx_bar_features_symbol_time ON bar_features (symbol, time DESC);
 """
 
 
@@ -132,6 +145,49 @@ class TimeSeriesStorage:
                 json.dumps(book["asks"]),
                 book["exchange"],
             )
+
+    async def insert_bar_features(self, features: dict) -> None:
+        """Insert one bar-features row (opt-in trade-flow enrichment).
+
+        Kept in a SEPARATE ``bar_features`` table so the ``ohlcv`` rows stay
+        byte-identical whether or not the enrichment is enabled.
+        """
+        assert self._pool is not None, "connect() must be called first"
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO bar_features
+                    (time, symbol, buy_volume, sell_volume, imbalance, vwap, interval)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                """,
+                features["timestamp"],
+                features["symbol"],
+                features["buy_volume"],
+                features["sell_volume"],
+                features["imbalance"],
+                features["vwap"],
+                features["interval"],
+            )
+
+    async def query_bar_features(
+        self, symbol: str, interval: str, start: datetime, end: datetime
+    ) -> list[dict]:
+        """Query bar-features rows within a time range (oldest first, like ohlcv)."""
+        assert self._pool is not None, "connect() must be called first"
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT time, symbol, buy_volume, sell_volume, imbalance, vwap
+                FROM bar_features
+                WHERE symbol = $1 AND interval = $2 AND time >= $3 AND time < $4
+                ORDER BY time ASC
+                """,
+                symbol,
+                interval,
+                start,
+                end,
+            )
+            return [dict(r) for r in rows]
 
     async def query_book(
         self, symbol: str, start: datetime, end: datetime, limit: int = 10000

@@ -23,6 +23,8 @@ OBJECTIVE_CHOICES = (
     "all",
 )
 EXPORT_CHOICES = ("csv", "json", "both", "none")
+COV_ESTIMATOR_CHOICES = ("sample", "ewma", "oas", "mp")
+MEAN_ESTIMATOR_CHOICES = ("sample", "ewma", "james_stein")
 
 
 @dataclass
@@ -44,6 +46,8 @@ class AnalysisConfig:
     no_plots: bool = False
     random_state: int | None = None
     offline: bool = False
+    cov_estimator: str = "sample"
+    mean_estimator: str = "sample"
 
 
 def _validate(config: AnalysisConfig) -> AnalysisConfig:
@@ -62,6 +66,10 @@ def _validate(config: AnalysisConfig) -> AnalysisConfig:
         raise ValueError(f"objective must be one of {OBJECTIVE_CHOICES}")
     if config.export_format not in EXPORT_CHOICES:
         raise ValueError(f"export_format must be one of {EXPORT_CHOICES}")
+    if config.cov_estimator not in COV_ESTIMATOR_CHOICES:
+        raise ValueError(f"cov_estimator must be one of {COV_ESTIMATOR_CHOICES}")
+    if config.mean_estimator not in MEAN_ESTIMATOR_CHOICES:
+        raise ValueError(f"mean_estimator must be one of {MEAN_ESTIMATOR_CHOICES}")
     return config
 
 
@@ -85,6 +93,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--export-format", dest="export_format", choices=EXPORT_CHOICES)
     p.add_argument("--no-plots", dest="no_plots", action="store_true", default=None)
     p.add_argument("--random-state", dest="random_state", type=int)
+    p.add_argument(
+        "--cov-estimator",
+        dest="cov_estimator",
+        choices=COV_ESTIMATOR_CHOICES,
+        help="Covariance estimator: sample (default), ewma, oas, or mp (MP denoising).",
+    )
+    p.add_argument(
+        "--mean-estimator",
+        dest="mean_estimator",
+        choices=MEAN_ESTIMATOR_CHOICES,
+        help="Expected-return estimator: sample (default), ewma, or james_stein.",
+    )
     p.add_argument(
         "--offline",
         dest="offline",

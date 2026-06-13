@@ -60,6 +60,27 @@ class BookUpdate:
 
 
 @dataclass
+class BarFeatures:
+    """Opt-in trade-flow enrichment computed alongside an :class:`OHLCVBar`.
+
+    Built from the SAME trades as the bar (the ``Trade.side`` field is already
+    the normalized taker/aggressor side, so the buy/sell split is exact flow
+    signing, not a tick-rule approximation):
+
+    * ``buy_volume`` / ``sell_volume`` — base-asset volume by aggressor side.
+    * ``imbalance`` — ``(buy_volume - sell_volume) / total_volume`` in
+      ``[-1, +1]``; ``0.0`` when total volume is zero.
+    * ``vwap`` — volume-weighted average price; falls back to the bar close
+      when total volume is zero.
+    """
+
+    buy_volume: float
+    sell_volume: float
+    imbalance: float
+    vwap: float
+
+
+@dataclass
 class OHLCVBar:
     symbol: str
     open: float
@@ -86,6 +107,7 @@ class TickNormalizer:
         self,
         adapter: ExchangeAdapter | None = None,
         depth_adapter: DepthAdapter | None = None,
+        enable_bar_features: bool = False,
     ) -> None:
         if adapter is None:
             # Imported here to avoid a module-level import cycle (adapters
@@ -97,7 +119,12 @@ class TickNormalizer:
         # OPT-IN: only set when a depth feed is enabled. Default ``None`` keeps
         # the trades-only behavior byte-identical.
         self.depth_adapter: DepthAdapter | None = depth_adapter
+        # OPT-IN: when on, each completed bar also computes BarFeatures from
+        # the same trades, stashed per-symbol until pop_bar_features() is
+        # called. Default OFF keeps the bar path byte-identical.
+        self.enable_bar_features = enable_bar_features
         self._bar_accumulators: dict[str, list[Trade]] = defaultdict(list)
+        self._pending_bar_features: dict[str, BarFeatures] = {}
 
     def normalize_trade(self, raw: dict | list) -> Trade | None:
         """Normalize a raw exchange message into a Trade via the adapter."""
@@ -167,9 +194,18 @@ class TickNormalizer:
                 bars.append(bar)
         return bars
 
+    def pop_bar_features(self, symbol: str) -> BarFeatures | None:
+        """Retrieve (and clear) the features computed for ``symbol``'s last bar.
+
+        Returns ``None`` when bar features are disabled (the default) or when
+        no bar has been built for the symbol since the last pop — so callers
+        can call this unconditionally with zero effect on the default path.
+        """
+        return self._pending_bar_features.pop(symbol, None)
+
     def _build_bar(self, symbol: str, trades: list[Trade], timestamp: datetime) -> OHLCVBar:
         prices = [t.price for t in trades]
-        return OHLCVBar(
+        bar = OHLCVBar(
             symbol=symbol,
             open=prices[0],
             high=max(prices),
@@ -178,4 +214,25 @@ class TickNormalizer:
             volume=sum(t.quantity for t in trades),
             timestamp=timestamp,
             trade_count=len(trades),
+        )
+        if self.enable_bar_features:
+            self._pending_bar_features[symbol] = self._compute_bar_features(trades, bar)
+        return bar
+
+    @staticmethod
+    def _compute_bar_features(trades: list[Trade], bar: OHLCVBar) -> BarFeatures:
+        buy_volume = sum(t.quantity for t in trades if t.side == "buy")
+        sell_volume = sum(t.quantity for t in trades if t.side == "sell")
+        total = buy_volume + sell_volume
+        notional = sum(t.price * t.quantity for t in trades)
+        # Zero-volume bars (e.g. dust trades reported with quantity 0) get a
+        # neutral imbalance and fall back to the close for VWAP — never a
+        # division by zero.
+        imbalance = (buy_volume - sell_volume) / total if total > 0 else 0.0
+        vwap = notional / bar.volume if bar.volume > 0 else bar.close
+        return BarFeatures(
+            buy_volume=buy_volume,
+            sell_volume=sell_volume,
+            imbalance=imbalance,
+            vwap=vwap,
         )

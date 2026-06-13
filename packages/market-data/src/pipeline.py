@@ -15,7 +15,8 @@ from .adapters import (
 )
 from .cache import RedisCache
 from .config import Config
-from .normalizer import TickNormalizer
+from .features import compute_book_features
+from .normalizer import OHLCVBar, TickNormalizer
 from .storage import TimeSeriesStorage
 from .storage_backend import StorageBackend
 from .websocket_client import MarketDataClient
@@ -84,7 +85,11 @@ class Pipeline:
         # built when ENABLE_DEPTH is set and the exchange supports depth. When
         # off (the default) the depth attributes are None and nothing changes.
         self.depth_adapter: DepthAdapter | None = build_depth_adapter_for(config)
-        self.normalizer = TickNormalizer(self.adapter, self.depth_adapter)
+        self.normalizer = TickNormalizer(
+            self.adapter,
+            self.depth_adapter,
+            enable_bar_features=config.enable_bar_features,
+        )
         self.depth_client: MarketDataClient | None = None
         if self.depth_adapter is not None:
             self.depth_client = MarketDataClient(config.ws_url, adapter=self.depth_adapter)
@@ -199,6 +204,10 @@ class Pipeline:
                 await self.storage.insert_ohlcv(asdict(bar))
             except Exception as e:  # noqa: BLE001 - best-effort on shutdown
                 logger.error(f"Failed to persist final OHLCV bar for {bar.symbol}: {e}")
+            try:
+                await self._emit_bar_features(bar)
+            except Exception as e:  # noqa: BLE001 - best-effort on shutdown
+                logger.error(f"Failed to persist final bar features for {bar.symbol}: {e}")
 
         # Flush remaining trades
         if self._trade_buffer:
@@ -250,6 +259,25 @@ class Pipeline:
             logger.debug(
                 f"OHLCV bar: {bar.symbol} O={bar.open} H={bar.high} L={bar.low} C={bar.close}"
             )
+            # OPT-IN trade-flow enrichment: pop_bar_features returns None when
+            # ENABLE_BAR_FEATURES is off, so the default path is byte-identical.
+            await self._emit_bar_features(bar)
+
+    async def _emit_bar_features(self, bar: OHLCVBar) -> None:
+        """Publish + persist the trade-flow features for a just-emitted bar.
+
+        No-op (a single dict pop returning ``None``) when bar features are
+        disabled — the default trades-only path stays byte-identical.
+        """
+        features = self.normalizer.pop_bar_features(bar.symbol)
+        if features is None:
+            return
+        feat_dict = asdict(features)
+        feat_dict["symbol"] = bar.symbol
+        feat_dict["timestamp"] = bar.timestamp
+        feat_dict["interval"] = bar.interval
+        await self.cache.publish(f"barfeat:{bar.symbol}", feat_dict)
+        await self.storage.insert_bar_features(feat_dict)
 
     async def _on_depth_message(self, raw: dict | list) -> None:
         """Process an incoming L2 depth message (opt-in depth feed).
@@ -274,6 +302,20 @@ class Pipeline:
             await self.storage.insert_book(book_dict)
         except Exception as e:  # noqa: BLE001 - best-effort; don't kill the feed
             logger.error(f"Failed to persist depth snapshot for {book.symbol}: {e}")
+
+        # Snapshot-level book features (mid/microprice, spread, depth
+        # imbalance — NOT event-level OFI; see src/features.py). Computed for
+        # every snapshot on the opt-in depth path: cache the latest under
+        # bookfeat:<symbol> and publish for live consumers. Best-effort —
+        # a cache hiccup must not kill the depth feed.
+        feat_dict = asdict(compute_book_features(book))
+        feat_dict["symbol"] = book.symbol
+        feat_dict["timestamp"] = book.timestamp
+        try:
+            await self.cache.set_book_features(book.symbol, feat_dict)
+            await self.cache.publish(f"bookfeat:{book.symbol}", feat_dict)
+        except Exception as e:  # noqa: BLE001 - best-effort; don't kill the feed
+            logger.error(f"Failed to cache book features for {book.symbol}: {e}")
 
     async def _flush_trades(self) -> None:
         """Flush buffered trades to storage."""

@@ -14,6 +14,7 @@ from src.black_scholes import (
     vega,
     volga,
 )
+from src.finite_difference import fd_price
 from src.greeks_visualizer import (
     plot_greeks_vs_spot,
     plot_greeks_vs_time,
@@ -27,6 +28,7 @@ from src.market_data import (
     price_chain,
 )
 from src.monte_carlo import monte_carlo_price
+from src.sabr import SABRParams, sabr_implied_vol
 
 
 def run_live(
@@ -105,6 +107,25 @@ def main() -> None:
             f"  {opt_type.upper():>4}: MC ${mc.price:.4f} ± {mc.std_error:.4f} (SE)  "
             f"vs BS ${bs:.4f}  (diff {abs(mc.price - bs):.4f})"
         )
+
+    # Crank-Nicolson finite-difference American pricer vs the binomial benchmark
+    print("\n--- Crank-Nicolson FD (American) vs binomial benchmark ---")
+    for opt_type in ["call", "put"]:
+        bt = BinomialTree(S, K, T, r, sigma, N=1000, option_type=opt_type, american=True).price()
+        fd = fd_price(S, K, T, r, sigma, opt_type, american=True, n_space=400, n_time=400)
+        print(
+            f"  {opt_type.upper():>4}: FD ${fd.price:.4f} (Δ {fd.delta:+.4f}, Γ {fd.gamma:.4f})  "
+            f"vs binomial ${bt:.4f}  (diff {abs(fd.price - bt):.4f})"
+        )
+
+    # SABR (Hagan 2002) smile -> Black-76 price for an ITM strike
+    print("\n--- SABR (Hagan 2002) smile -> Black-76 price ---")
+    sabr = SABRParams(alpha=0.30, beta=0.5, rho=-0.30, nu=0.40)
+    F_sabr = S * 1.02
+    for strike in (90.0, F_sabr, 120.0):
+        iv = float(sabr_implied_vol(F_sabr, strike, T, *sabr))
+        px = black_76_price(F_sabr, strike, T, r, iv, "call")
+        print(f"  K={strike:>6.2f}: SABR Black vol {iv:.2%} -> Black-76 call ${px:.4f}")
 
     # Implied volatility
     market_price = 3.50

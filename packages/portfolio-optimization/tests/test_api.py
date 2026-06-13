@@ -285,3 +285,66 @@ def test_bl_bad_returns_shape_422():
         json={"tickers": TICKERS, "returns": [[0.1, 0.2]], "views": []},
     )
     assert resp.status_code == 422
+
+
+# --- estimator fields on /optimize + /risk-attribution ---
+
+
+def test_optimize_with_cov_estimator():
+    resp = client.post(
+        "/optimize",
+        json={
+            "tickers": TICKERS,
+            "returns": _returns_matrix(),
+            "objective": "min_volatility",
+            "cov_estimator": "oas",
+            "mean_estimator": "james_stein",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert abs(sum(body["weights"].values()) - 1.0) < 1e-5
+
+
+def test_risk_attribution_per_asset_sums_to_one():
+    resp = client.post(
+        "/risk-attribution",
+        json={
+            "tickers": TICKERS,
+            "returns": _returns_matrix(),
+            "weights": {t: 0.25 for t in TICKERS},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    pct = sum(row["pct_risk"] for row in body["attribution"].values())
+    assert pct == pytest.approx(1.0, abs=1e-9)
+    ccr = sum(row["ccr"] for row in body["attribution"].values())
+    assert ccr == pytest.approx(body["volatility"], abs=1e-9)
+
+
+def test_risk_attribution_with_groups():
+    resp = client.post(
+        "/risk-attribution",
+        json={
+            "tickers": TICKERS,
+            "returns": _returns_matrix(),
+            "weights": {t: 0.25 for t in TICKERS},
+            "groups": {"tech": ["AAPL", "MSFT", "GOOG"], "fin": ["JPM"]},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body["attribution"]) == {"tech", "fin"}
+
+
+def test_risk_attribution_unknown_weight_ticker_422():
+    resp = client.post(
+        "/risk-attribution",
+        json={
+            "tickers": TICKERS,
+            "returns": _returns_matrix(),
+            "weights": {"TSLA": 1.0},
+        },
+    )
+    assert resp.status_code == 422

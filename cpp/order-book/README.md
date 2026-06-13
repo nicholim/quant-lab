@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![clang-format](https://img.shields.io/badge/code%20style-clang--format-1f425f.svg)](.clang-format)
 [![Ruff](https://img.shields.io/badge/lint-ruff-261230.svg?logo=ruff&logoColor=white)](https://docs.astral.sh/ruff/)
-[![Tests](https://img.shields.io/badge/tests-53%20C%2B%2B%20%7C%2059%20Python-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-53%20C%2B%2B%20%7C%2089%20Python-brightgreen.svg)](tests/)
 
 A real **price-time-priority limit order book matching engine** in C++17, with a Python layer for
 order-flow simulation and depth-of-book visualization.
@@ -226,17 +226,38 @@ evidence the latency clock reordered the flow (with all latencies equal that cou
 of latencies it is large). Pieces:
 
 - **`SimulationKernel`** — min-heap event queue keyed by integer-nanosecond sim time; processes
-  `WAKEUP` (an agent thinks) and `ARRIVAL` (an order reaches the book) events strictly in time order,
-  breaking ties FIFO by insertion sequence (so a fixed seed is fully reproducible). It never matches —
-  every arrival is submitted to the real `OrderBook` and the engine's fills are recorded.
+  `WAKEUP` (an agent thinks), `ARRIVAL` (an order reaches the book) and `CANCEL` (a cancel reaches the
+  book, also latency-delayed) events strictly in time order, breaking ties FIFO by insertion sequence
+  (so a fixed seed is fully reproducible). It never matches — every arrival is submitted to the real
+  `OrderBook` and the engine's fills are recorded. It also maintains an **L3 event tape**
+  (`TapeRecord`: `ORDER`/`TRADE`/`CANCEL` with taker/maker agent ids), per-agent **fill attribution**
+  (`on_fill`/`on_order_accepted`/`on_cancel_result` hooks + `KernelResult.agent_inventory`).
 - **`NoiseAgent`** — a zero-intelligence random trader (ABIDES' "ZI" archetype).
 - **`MarketMakerAgent`** — quotes a symmetric `POST_ONLY` bid/ask around the engine's live mid.
+- **`AvellanedaStoikovAgent`** — a finite-horizon Avellaneda-Stoikov inventory-aware maker: reservation
+  price `r = mid − q·γ·σ²·τ`, half-spread `δ = γσ²τ/2 + ln(1+γ/k)/γ`. `γ` and `k` are **user-supplied**
+  (we do **not** auto-fit `k`); `σ` is estimated online from observed mids. It posts `POST_ONLY`
+  quotes, cancels stale quotes before re-quoting, and tracks inventory from **real fills** — the A-S
+  formulas only *place* the quotes; whether they fill is decided by the real matching engine.
 
-**Honesty vs ABIDES:** this is a *lite* model — no ITCH/OUCH wire protocol, no exchange-agent message
-bus, no per-agent computation-time accounting, no geography, and no thousands-of-agents scale. It also
-adds **no** stochastic-intensity / Avellaneda-Stoikov fill model: fills come **only** from the real
-C++ matching engine. It models exactly one ABIDES capability — a discrete-event clock with
-agent→exchange latency driving real LOB matching.
+```bash
+# Compare A-S vs the naive maker on IDENTICAL noise flow (deterministic):
+python python/abides_lite.py --compare-mm --steps 4000 --seed 42
+# -> the A-S maker's inventory stays near 0 (it skews quotes against inventory);
+#    the naive maker accumulates a large directional position.
+```
+
+**Microstructure features** — `python/orderbook/features.py` derives the standard LOB signals straight
+off the live engine (all None-safe on empty/one-sided books, never raise): `quoted_spread`,
+`mid_price`, `microprice` (size-weighted mid), `volume_imbalance` (top-1 and top-k `(B−A)/(B+A)`),
+`depth_profile` (cumulative qty per side) and a one-call `snapshot`.
+
+**Honesty vs ABIDES / mbt-gym:** this is a *lite* model — no ITCH/OUCH wire protocol, no exchange-agent
+message bus, no per-agent computation-time accounting, no geography, and no thousands-of-agents scale.
+Avellaneda-Stoikov **now exists** as a quoting *agent*, but — unlike mbt-gym and the A-S paper — it adds
+**no** stochastic-intensity fill model: every fill (for every agent) comes **only** from the real C++
+matching engine. It models the core ABIDES capability — a discrete-event clock with agent→exchange
+latency driving real LOB matching — plus an inventory-aware maker and microstructure feature layer.
 
 ### 3. Run the tests
 
@@ -245,8 +266,8 @@ agent→exchange latency driving real LOB matching.
 cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 
-# Python tests (59 tests; drives the compiled pybind11 engine in-process +
-# covers the viz/sim + ABIDES-lite agent layers). Build the extension first (step 1).
+# Python tests (89 tests; drives the compiled pybind11 engine in-process + covers
+# the viz/sim + ABIDES-lite agent/tape/feature layers). Build the extension first (step 1).
 pytest          # from the repo root; runs with coverage (--cov-fail-under=80)
 ```
 
@@ -342,7 +363,9 @@ include LOB matching plus latency modeling.
 | Core idea | Deterministic price-time-priority matching engine | Discrete-event, multi-agent market simulator | Model-based LOB trading as an RL gym |
 | Real order matching | **Yes** — best-price-first, FIFO-in-level, partial fills | **Yes** — order-matching engine resolves crossing orders | **No** — fills come from stochastic intensity models (Avellaneda-Stoikov style) |
 | Latency modeling | **Partial** — an "ABIDES-lite" discrete-event kernel applies a per-agent agent→exchange latency so arrival order ≠ submission order (no network topology/geography) | **Yes** — discrete-event simulation models agent/network latency | Stochastic latency in the control model, not a network sim |
-| Background/trading agents | **Partial** — a small agent layer (zero-intelligence noise trader + a market maker) emits flow into the real engine; not ABIDES-scale | **Yes** — populations of interacting background agents | Agents are RL policies / an adversary, not a LOB crowd |
+| Background/trading agents | **Partial** — a small agent layer (zero-intelligence noise trader, a naive market maker, and a finite-horizon **Avellaneda-Stoikov** inventory-aware maker) emits flow into the real engine; not ABIDES-scale | **Yes** — populations of interacting background agents | Agents are RL policies / an adversary, not a LOB crowd |
+| Avellaneda-Stoikov maker | **Yes** — A-S used to *quote* (reservation price + inventory skew); fills come from the **real** engine, not a fill-intensity model | Implementable as an agent | **Yes** — the canonical model-based A-S (stochastic fill intensity) |
+| Microstructure features | **Yes** — micro-price, top-k volume imbalance, cumulative depth profile, quoted spread (off the live book) | Via custom feature extractors | **Yes** — part of the observation space |
 | RL / gym interface | No | Yes (ABIDES-gym) | **Yes** — that's the point |
 | Language | C++17 core + Python viz | Python | Python (NumPy/Numba, vectorized) |
 | Best for | Learning/teaching matching mechanics; a fast, exact LOB primitive | Realistic market-microstructure & latency experiments | Training RL market-making agents on a stochastic model |

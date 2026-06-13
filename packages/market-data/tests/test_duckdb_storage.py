@@ -230,4 +230,6 @@ class TestPersistenceAndExport:
         assert (out / "ohlcv.parquet").exists()
         # The L2 depth `book` table is also exported (empty here, but written).
         assert (out / "book.parquet").exists()
-        assert set(paths) == {"trades", "ohlcv", "book"}
+        # The opt-in bar_features table is also exported (empty here, but written).
+        assert (out / "bar_features.parquet").exists()
+        assert set(paths) == {"trades", "ohlcv", "book", "bar_features"}

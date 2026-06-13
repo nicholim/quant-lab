@@ -61,9 +61,20 @@ CREATE TABLE IF NOT EXISTS book (
     exchange    VARCHAR     NOT NULL DEFAULT 'binance'
 );
 
+CREATE TABLE IF NOT EXISTS bar_features (
+    time        TIMESTAMPTZ NOT NULL,
+    symbol      VARCHAR     NOT NULL,
+    buy_volume  DOUBLE      NOT NULL,
+    sell_volume DOUBLE      NOT NULL,
+    imbalance   DOUBLE      NOT NULL,
+    vwap        DOUBLE      NOT NULL,
+    interval    VARCHAR     NOT NULL DEFAULT '1m'
+);
+
 CREATE INDEX IF NOT EXISTS idx_trades_symbol_time ON trades (symbol, "time");
 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_time ON ohlcv (symbol, "time");
 CREATE INDEX IF NOT EXISTS idx_book_symbol_time ON book (symbol, "time");
+CREATE INDEX IF NOT EXISTS idx_bar_features_symbol_time ON bar_features (symbol, "time");
 """
 
 _TRADE_COLUMNS = ("time", "symbol", "price", "quantity", "side", "exchange")
@@ -71,6 +82,7 @@ _OHLCV_COLUMNS = ("time", "symbol", "open", "high", "low", "close", "volume", "t
 # L2 depth: bids/asks are stored as JSON strings (a wide row per snapshot) and
 # decoded back to lists of {"price","quantity"} dicts on read.
 _BOOK_COLUMNS = ("time", "symbol", "bids", "asks", "exchange")
+_BAR_FEATURES_COLUMNS = ("time", "symbol", "buy_volume", "sell_volume", "imbalance", "vwap")
 
 
 class DuckDBStorage:
@@ -150,6 +162,34 @@ class DuckDBStorage:
         )
         await asyncio.to_thread(self._execute_book, conn, row)
 
+    async def insert_bar_features(self, features: dict) -> None:
+        """Insert one bar-features row (opt-in trade-flow enrichment)."""
+        conn = self._require_conn()
+        row = (
+            features["timestamp"],
+            features["symbol"],
+            features["buy_volume"],
+            features["sell_volume"],
+            features["imbalance"],
+            features["vwap"],
+            features["interval"],
+        )
+        await asyncio.to_thread(self._execute_bar_features, conn, row)
+
+    async def query_bar_features(
+        self, symbol: str, interval: str, start: datetime, end: datetime
+    ) -> list[dict]:
+        """Query bar-features rows within a time range (oldest first, like ohlcv)."""
+        conn = self._require_conn()
+        sql = """
+            SELECT time, symbol, buy_volume, sell_volume, imbalance, vwap
+            FROM bar_features
+            WHERE symbol = ? AND interval = ? AND time >= ? AND time < ?
+            ORDER BY time ASC
+        """
+        records = await asyncio.to_thread(self._fetch, conn, sql, [symbol, interval, start, end])
+        return [dict(zip(_BAR_FEATURES_COLUMNS, r, strict=True)) for r in records]
+
     async def query_book(
         self, symbol: str, start: datetime, end: datetime, limit: int = 10000
     ) -> list[dict]:
@@ -209,6 +249,7 @@ class DuckDBStorage:
             "trades": os.path.join(output_dir, "trades.parquet"),
             "ohlcv": os.path.join(output_dir, "ohlcv.parquet"),
             "book": os.path.join(output_dir, "book.parquet"),
+            "bar_features": os.path.join(output_dir, "bar_features.parquet"),
         }
         await asyncio.to_thread(self._export_parquet, conn, paths)
         logger.info("Exported DuckDB tables to Parquet in %s", output_dir)
@@ -237,6 +278,15 @@ class DuckDBStorage:
     def _execute_book(conn: duckdb.DuckDBPyConnection, row: tuple) -> None:
         conn.execute(
             "INSERT INTO book (time, symbol, bids, asks, exchange) VALUES (?, ?, ?, ?, ?)",
+            row,
+        )
+
+    @staticmethod
+    def _execute_bar_features(conn: duckdb.DuckDBPyConnection, row: tuple) -> None:
+        conn.execute(
+            "INSERT INTO bar_features "
+            "(time, symbol, buy_volume, sell_volume, imbalance, vwap, interval) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             row,
         )
 

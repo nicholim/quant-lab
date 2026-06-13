@@ -125,13 +125,28 @@ def parse_returns_csv(raw: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_optimizer(returns: pd.DataFrame, risk_free_rate: float) -> PortfolioOptimizer:
-    """Injected-returns optimizer (the backtester/FastAPI contract, no network)."""
+def build_optimizer(
+    returns: pd.DataFrame,
+    risk_free_rate: float,
+    *,
+    cov_estimator: str = "sample",
+    mean_estimator: str = "sample",
+) -> PortfolioOptimizer:
+    """Injected-returns optimizer (the backtester/FastAPI contract, no network).
+
+    ``cov_estimator`` / ``mean_estimator`` default to the plain sample moments
+    (unchanged behavior); any other choice routes through the same annualized
+    estimators ``calculate_returns`` uses.
+    """
     tickers = list(returns.columns)
     opt = PortfolioOptimizer(tickers, "1970-01-01", "1970-01-02", risk_free_rate=risk_free_rate)
     opt.returns = returns
-    opt.mean_returns = returns.mean() * 252
-    opt.cov_matrix = returns.cov() * 252
+    if cov_estimator == "sample" and mean_estimator == "sample":
+        opt.mean_returns = returns.mean() * 252
+        opt.cov_matrix = returns.cov() * 252
+    else:
+        opt.mean_returns = opt._estimate_mean_returns(returns, mean_estimator, 0.94)
+        opt.cov_matrix = opt._estimate_cov_matrix(returns, None, cov_estimator, 0.94)
     return opt
 
 
@@ -182,6 +197,45 @@ def weights_figure(tickers: list[str], weights: np.ndarray) -> go.Figure:
         height=max(180, 42 * len(tickers)),
         xaxis=dict(title="Weight", tickformat=".0%"),
         yaxis=dict(title=""),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
+def risk_attribution_figure(attr: pd.DataFrame) -> go.Figure:
+    """Grouped bar comparing each asset's % of total risk against its % weight.
+
+    Highlights concentration: a bar whose risk share exceeds its weight share is
+    a hidden risk concentration (and vice-versa).
+    """
+    labels = [str(i) for i in attr.index]
+    fig = go.Figure()
+    fig.add_bar(
+        x=labels,
+        y=attr["weight"].to_numpy(dtype=float),
+        name="% weight",
+        marker_color="#9aa7b5",
+        text=[f"{v:.1%}" for v in attr["weight"]],
+        textposition="outside",
+        cliponaxis=False,
+    )
+    fig.add_bar(
+        x=labels,
+        y=attr["pct_risk"].to_numpy(dtype=float),
+        name="% risk",
+        marker_color=ACCENT,
+        text=[f"{v:.1%}" for v in attr["pct_risk"]],
+        textposition="outside",
+        cliponaxis=False,
+    )
+    fig.update_layout(
+        barmode="group",
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=max(220, 60 * len(labels)),
+        yaxis=dict(title="Share of portfolio", tickformat=".0%"),
+        xaxis=dict(title=""),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1.0),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
@@ -450,6 +504,16 @@ def main() -> None:
     risk_free_rate = st.sidebar.slider(
         "Risk-free rate", 0.0, 0.10, 0.02, 0.005, help="Annual; feeds Sharpe / Sortino / metrics."
     )
+    cov_estimator = st.sidebar.selectbox(
+        "Covariance estimator",
+        ["sample", "ewma", "oas", "mp"],
+        help="sample (default), ewma (RiskMetrics), oas (shrinkage), mp (MP denoising).",
+    )
+    mean_estimator = st.sidebar.selectbox(
+        "Mean estimator",
+        ["sample", "ewma", "james_stein"],
+        help="sample (default), ewma, or james_stein (shrink toward grand mean).",
+    )
     target_value: float | None = None
     if spec.target == "vol":
         target_value = st.sidebar.slider("Target volatility", 0.05, 0.60, 0.20, 0.01)
@@ -473,19 +537,29 @@ def main() -> None:
         return
 
     tickers = list(returns.columns)
-    opt = build_optimizer(returns, risk_free_rate)
-
     try:
+        opt = build_optimizer(
+            returns,
+            risk_free_rate,
+            cov_estimator=cov_estimator,
+            mean_estimator=mean_estimator,
+        )
         with st.spinner("Optimizing portfolio..."):
             result = run_objective(opt, obj_key, target_value=target_value)
             perf = metrics_row(returns, result.weights, risk_free_rate)
     except (ValueError, np.linalg.LinAlgError) as exc:
         st.error(f"Optimization could not be completed: {exc}")
-        st.caption("Try a different objective, target, or a longer lookback window.")
+        st.caption("Try a different objective, estimator, target, or a longer lookback window.")
         return
 
-    tab_opt, tab_frontier, tab_all, tab_bl = st.tabs(
-        ["Optimal portfolio", "Efficient frontier", "All objectives", "Black-Litterman"]
+    tab_opt, tab_frontier, tab_risk, tab_all, tab_bl = st.tabs(
+        [
+            "Optimal portfolio",
+            "Efficient frontier",
+            "Risk attribution",
+            "All objectives",
+            "Black-Litterman",
+        ]
     )
 
     with tab_opt:
@@ -521,6 +595,22 @@ def main() -> None:
             )
         except (ValueError, np.linalg.LinAlgError) as exc:
             st.error(f"Frontier could not be computed: {exc}")
+
+    with tab_risk:
+        st.subheader("Risk attribution")
+        st.caption(
+            "Euler decomposition of portfolio volatility: each asset's share of total "
+            "risk (% risk) vs its share of capital (% weight). Risk > weight flags a "
+            "concentration. Component contributions sum to the portfolio volatility."
+        )
+        attr = opt.risk_attribution(result.weights)
+        st.plotly_chart(risk_attribution_figure(attr), use_container_width=True)
+        st.dataframe(
+            attr.style.format(
+                {"weight": "{:.2%}", "mcr": "{:.4f}", "ccr": "{:.4f}", "pct_risk": "{:.2%}"}
+            ),
+            use_container_width=True,
+        )
 
     with tab_all:
         st.subheader("All objectives compared")

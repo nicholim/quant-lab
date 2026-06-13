@@ -83,6 +83,20 @@ class OptimizeRequest(BaseModel):
             "(no penalty); ignored unless `current_weights` is also supplied."
         ),
     )
+    cov_estimator: str | None = Field(
+        None,
+        description=(
+            "Optional covariance estimator: 'sample' (default/None), 'ewma', 'oas', "
+            "or 'mp' (Marchenko-Pastur denoising). Default keeps the plain sample cov."
+        ),
+    )
+    mean_estimator: str | None = Field(
+        None,
+        description=(
+            "Optional expected-return estimator: 'sample' (default/None), 'ewma', or "
+            "'james_stein'. Default keeps the plain sample mean."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -198,12 +212,19 @@ def objectives() -> dict[str, list[str]]:
 
 
 def _build_optimizer(
-    tickers: list[str], returns: list[list[float]], risk_free_rate: float
+    tickers: list[str],
+    returns: list[list[float]],
+    risk_free_rate: float,
+    cov_estimator: str | None = None,
+    mean_estimator: str | None = None,
 ) -> PortfolioOptimizer:
     """Validate the returns matrix and build an injected-returns optimizer.
 
     Mirrors the backtester's contract: set ``.returns`` / ``.mean_returns`` /
     ``.cov_matrix`` directly (no network) before calling any ``optimize_*``.
+    Optional ``cov_estimator`` / ``mean_estimator`` route through the same
+    annualized estimators ``calculate_returns`` uses; ``None`` keeps the plain
+    sample moments (unchanged default).
     """
     returns_arr = np.asarray(returns, dtype=float)
     if returns_arr.ndim != 2 or returns_arr.shape[1] != len(tickers):
@@ -222,8 +243,21 @@ def _build_optimizer(
         tickers, "1970-01-01", "1970-01-02", risk_free_rate=risk_free_rate
     )
     optimizer.returns = returns_df
-    optimizer.mean_returns = returns_df.mean() * 252
-    optimizer.cov_matrix = returns_df.cov() * 252
+    if (cov_estimator is None or cov_estimator == "sample") and (
+        mean_estimator is None or mean_estimator == "sample"
+    ):
+        optimizer.mean_returns = returns_df.mean() * 252
+        optimizer.cov_matrix = returns_df.cov() * 252
+    else:
+        try:
+            optimizer.mean_returns = optimizer._estimate_mean_returns(
+                returns_df, mean_estimator, 0.94
+            )
+            optimizer.cov_matrix = optimizer._estimate_cov_matrix(
+                returns_df, None, cov_estimator, 0.94
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     return optimizer
 
 
@@ -241,7 +275,13 @@ def optimize(req: OptimizeRequest) -> OptimizeResponse:
             detail=f"Unknown objective '{req.objective}'. Valid: {list(_OBJECTIVES)}",
         )
 
-    optimizer = _build_optimizer(req.tickers, req.returns, req.risk_free_rate)
+    optimizer = _build_optimizer(
+        req.tickers,
+        req.returns,
+        req.risk_free_rate,
+        cov_estimator=req.cov_estimator,
+        mean_estimator=req.mean_estimator,
+    )
 
     # Opt-in transaction-cost-aware rebalancing: only thread the turnover kwargs
     # through when the client supplied a prior allocation AND the objective's
@@ -318,6 +358,97 @@ def _build_views(
     else:
         omega = None  # falls back to the library default inside black_litterman
     return p, q, omega
+
+
+class RiskAttributionRequest(BaseModel):
+    tickers: list[str] = Field(..., min_length=2, description="Asset tickers/labels (length n).")
+    returns: list[list[float]] = Field(
+        ..., description="Daily returns matrix shaped (T, n), columns ordered like `tickers`."
+    )
+    weights: dict[str, float] = Field(
+        ..., description="Portfolio weights to decompose (ticker -> weight)."
+    )
+    risk_free_rate: float = Field(0.02, description="Annual risk-free rate.")
+    groups: dict[str, list[str]] | None = Field(
+        None,
+        description=(
+            "Optional sector/group rollup: group name -> member tickers. When set, "
+            "the response is aggregated per group instead of per asset."
+        ),
+    )
+    cov_estimator: str | None = Field(
+        None, description="Optional covariance estimator: sample/None, ewma, oas, mp."
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "tickers": ["AAPL", "MSFT", "GOOG"],
+                "returns": [
+                    [0.001, -0.002, 0.0005],
+                    [0.0003, 0.0011, -0.0007],
+                    [-0.0008, 0.0004, 0.0012],
+                ],
+                "weights": {"AAPL": 0.4, "MSFT": 0.4, "GOOG": 0.2},
+            }
+        }
+    }
+
+
+class RiskAttributionRow(BaseModel):
+    weight: float
+    mcr: float
+    ccr: float
+    pct_risk: float
+
+
+class RiskAttributionResponse(BaseModel):
+    volatility: float
+    attribution: dict[str, RiskAttributionRow]
+
+
+@app.post("/risk-attribution", response_model=RiskAttributionResponse)
+def risk_attribution(req: RiskAttributionRequest) -> RiskAttributionResponse:
+    """Euler decomposition of portfolio volatility into per-asset (or per-group) risk.
+
+    Reuses ``PortfolioOptimizer.risk_attribution`` via the injected-returns
+    contract. The component contributions (``ccr``) sum to the portfolio
+    volatility; ``pct_risk`` sums to 1.
+    """
+    optimizer = _build_optimizer(
+        req.tickers, req.returns, req.risk_free_rate, cov_estimator=req.cov_estimator
+    )
+    unknown = set(req.weights) - set(req.tickers)
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"weights references unknown tickers: {sorted(unknown)}",
+        )
+    w = np.array([float(req.weights.get(t, 0.0)) for t in req.tickers])
+
+    groups = None
+    if req.groups:
+        bad = {t for members in req.groups.values() for t in members} - set(req.tickers)
+        if bad:
+            raise HTTPException(
+                status_code=422,
+                detail=f"groups references unknown tickers: {sorted(bad)}",
+            )
+        # adapt the {name: [members]} payload to the optimizer's (members, gmin, gmax) tuple.
+        groups = {name: (members, 0.0, 1.0) for name, members in req.groups.items()}
+
+    attr = optimizer.risk_attribution(w, groups=groups)
+    vol = float(optimizer.portfolio_volatility(w))
+    rows = {
+        str(idx): RiskAttributionRow(
+            weight=float(row["weight"]),
+            mcr=float(row["mcr"]),
+            ccr=float(row["ccr"]),
+            pct_risk=float(row["pct_risk"]),
+        )
+        for idx, row in attr.iterrows()
+    }
+    return RiskAttributionResponse(volatility=vol, attribution=rows)
 
 
 @app.post("/optimize/black-litterman", response_model=BlackLittermanResponse)

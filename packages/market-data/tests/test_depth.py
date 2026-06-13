@@ -315,6 +315,7 @@ class TestDuckDBBook:
 class _FakeCache:
     def __init__(self):
         self.books = {}
+        self.book_features = {}
         self.published = []
         self.prices = {}
         self.pushed = []
@@ -333,6 +334,9 @@ class _FakeCache:
 
     async def set_book(self, symbol, book_data):
         self.books[symbol] = book_data
+
+    async def set_book_features(self, symbol, features):
+        self.book_features[symbol] = features
 
     async def publish(self, channel, message):
         self.published.append((channel, message))

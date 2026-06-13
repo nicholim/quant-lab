@@ -131,3 +131,100 @@ class TestBenchmark:
         low = rng.normal(0, 0.005, 1000)
         high = rng.normal(0, 0.02, 1000)
         assert annualized_volatility(high) > annualized_volatility(low)
+
+
+# --- Probabilistic & Deflated Sharpe Ratio (Bailey & Lopez de Prado) ---
+
+
+class TestProbabilisticSharpeRatio:
+    def test_hand_checked_normal_case(self):
+        # Normal returns (skew=0, kurtosis=3), observed SR=0.1, benchmark=0, n=101.
+        # sigma_SR = sqrt((1 + (3-1)/4 * 0.1^2) / 100) = sqrt(1.005/100) = 0.100250
+        # PSR = Phi(0.1 / 0.100250) = Phi(0.997506) ~= 0.840719
+        from portfolio_optimization_engine.metrics import probabilistic_sharpe_ratio
+
+        psr = probabilistic_sharpe_ratio(0.1, 0.0, 101, skew=0.0, kurtosis=3.0)
+        assert psr == pytest.approx(0.840719, abs=1e-4)
+
+    def test_monotone_increasing_in_observed_sr(self):
+        from portfolio_optimization_engine.metrics import probabilistic_sharpe_ratio
+
+        vals = [probabilistic_sharpe_ratio(sr, 0.0, 200) for sr in [-0.1, 0.0, 0.1, 0.3, 0.5]]
+        assert all(b > a for a, b in zip(vals, vals[1:], strict=False))
+
+    def test_bounded_unit_interval(self):
+        from portfolio_optimization_engine.metrics import probabilistic_sharpe_ratio
+
+        for sr in [-5.0, 0.0, 5.0]:
+            psr = probabilistic_sharpe_ratio(sr, 0.0, 50)
+            assert 0.0 <= psr <= 1.0
+
+    def test_observed_equals_benchmark_is_half(self):
+        from portfolio_optimization_engine.metrics import probabilistic_sharpe_ratio
+
+        assert probabilistic_sharpe_ratio(0.2, 0.2, 100) == pytest.approx(0.5, abs=1e-9)
+
+    def test_more_observations_more_confident(self):
+        from portfolio_optimization_engine.metrics import probabilistic_sharpe_ratio
+
+        small = probabilistic_sharpe_ratio(0.1, 0.0, 30)
+        large = probabilistic_sharpe_ratio(0.1, 0.0, 3000)
+        assert large > small
+
+    def test_negative_skew_lowers_psr(self):
+        from portfolio_optimization_engine.metrics import probabilistic_sharpe_ratio
+
+        base = probabilistic_sharpe_ratio(0.2, 0.0, 200, skew=0.0, kurtosis=3.0)
+        neg = probabilistic_sharpe_ratio(0.2, 0.0, 200, skew=-1.0, kurtosis=3.0)
+        assert neg < base
+
+    def test_degenerate_n_raises(self):
+        from portfolio_optimization_engine.metrics import probabilistic_sharpe_ratio
+
+        with pytest.raises(ValueError):
+            probabilistic_sharpe_ratio(0.1, 0.0, 1)
+
+
+class TestDeflatedSharpeRatio:
+    def test_single_trial_reduces_to_psr(self):
+        from portfolio_optimization_engine.metrics import (
+            deflated_sharpe_ratio,
+            probabilistic_sharpe_ratio,
+        )
+
+        dsr = deflated_sharpe_ratio(0.2, n=200, n_trials=1, sr_variance=0.01)
+        psr = probabilistic_sharpe_ratio(0.2, 0.0, 200)
+        assert dsr == pytest.approx(psr, abs=1e-9)
+
+    def test_dsr_le_psr_for_many_trials(self):
+        from portfolio_optimization_engine.metrics import (
+            deflated_sharpe_ratio,
+            probabilistic_sharpe_ratio,
+        )
+
+        psr = probabilistic_sharpe_ratio(0.2, 0.0, 200)
+        dsr = deflated_sharpe_ratio(0.2, n=200, n_trials=50, sr_variance=0.01)
+        assert dsr <= psr
+
+    def test_more_trials_lower_dsr(self):
+        from portfolio_optimization_engine.metrics import deflated_sharpe_ratio
+
+        few = deflated_sharpe_ratio(0.3, n=300, n_trials=5, sr_variance=0.02)
+        many = deflated_sharpe_ratio(0.3, n=300, n_trials=500, sr_variance=0.02)
+        assert many < few
+
+    def test_zero_variance_no_deflation(self):
+        from portfolio_optimization_engine.metrics import (
+            deflated_sharpe_ratio,
+            probabilistic_sharpe_ratio,
+        )
+
+        dsr = deflated_sharpe_ratio(0.2, n=200, n_trials=100, sr_variance=0.0)
+        psr = probabilistic_sharpe_ratio(0.2, 0.0, 200)
+        assert dsr == pytest.approx(psr, abs=1e-9)
+
+    def test_expected_max_sharpe_grows_with_trials(self):
+        from portfolio_optimization_engine.metrics import expected_max_sharpe
+
+        assert expected_max_sharpe(1, 0.01) == 0.0
+        assert expected_max_sharpe(100, 0.01) > expected_max_sharpe(10, 0.01) > 0.0

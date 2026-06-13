@@ -7,8 +7,9 @@ from scipy.optimize import linprog, minimize
 from scipy.spatial.distance import squareform
 
 from .black_litterman import black_litterman
-from .covariance import ledoit_wolf_shrinkage
+from .covariance import estimate_covariance, ledoit_wolf_shrinkage
 from .data_cache import download_close_prices
+from .estimators import estimate_mean
 
 
 @dataclass
@@ -77,40 +78,95 @@ class PortfolioOptimizer:
     def calculate_returns(
         self,
         shrinkage: str | None = None,
+        *,
+        cov_estimator: str | None = None,
+        mean_estimator: str | None = None,
+        ewma_lambda: float = 0.94,
     ) -> pd.DataFrame:
         """Compute daily and annualized return statistics.
 
         Parameters
         ----------
         shrinkage:
-            Covariance estimator for ``cov_matrix``. ``None`` (default) uses the
-            plain sample covariance exactly as before -- this preserves metrics
-            parity with the backtester, which never opts in. Pass
+            Ledoit-Wolf shrinkage target for ``cov_matrix``. ``None`` (default)
+            uses the plain sample covariance exactly as before -- this preserves
+            metrics parity with the backtester, which never opts in. Pass
             ``"constant_correlation"`` or ``"identity"`` to apply Ledoit-Wolf
             shrinkage toward that structured target with the analytically optimal
             intensity. When shrinkage is applied, the chosen intensity is stored
-            on ``self.shrinkage_intensity`` (otherwise ``None``).
+            on ``self.shrinkage_intensity`` (otherwise ``None``). Mutually
+            exclusive with ``cov_estimator``.
+        cov_estimator:
+            Alternative named covariance estimator (see
+            :func:`covariance.estimate_covariance`): ``"sample"`` (==default),
+            ``"ewma"``, ``"oas"`` (OAS shrinkage; sets ``shrinkage_intensity``),
+            or ``"mp"`` (Marchenko-Pastur denoising). ``None`` (default) keeps the
+            byte-identical ``returns.cov() * 252`` path.
+        mean_estimator:
+            Named expected-return estimator (see
+            :func:`estimators.estimate_mean`): ``"sample"`` (==default),
+            ``"ewma"``, or ``"james_stein"``. ``None`` (default) keeps the
+            byte-identical ``returns.mean() * 252`` path.
+        ewma_lambda:
+            Decay factor for the ``"ewma"`` cov/mean estimators (default 0.94).
         """
         if self.prices is None:
             raise ValueError("Call fetch_data() first")
+        if shrinkage is not None and cov_estimator is not None:
+            raise ValueError("Pass at most one of `shrinkage` (Ledoit-Wolf) or `cov_estimator`")
         self.returns = self.prices.pct_change().dropna()
-        self.mean_returns = self.returns.mean() * 252
-        self.cov_matrix = self._estimate_cov_matrix(self.returns, shrinkage)
+        self.mean_returns = self._estimate_mean_returns(self.returns, mean_estimator, ewma_lambda)
+        self.cov_matrix = self._estimate_cov_matrix(
+            self.returns, shrinkage, cov_estimator, ewma_lambda
+        )
         return self.returns
 
-    def _estimate_cov_matrix(self, returns: pd.DataFrame, shrinkage: str | None) -> pd.DataFrame:
-        """Annualized covariance: plain sample (default) or Ledoit-Wolf shrunk.
+    def _estimate_mean_returns(
+        self, returns: pd.DataFrame, mean_estimator: str | None, ewma_lambda: float
+    ) -> pd.Series:
+        """Annualized expected returns: sample mean (default) or a named estimator.
 
-        With ``shrinkage is None`` this returns ``returns.cov() * 252`` -- byte
-        identical to the previous behavior. Shrinkage is computed on the
-        per-period returns then annualized, and labeled with the asset columns.
+        With ``mean_estimator is None`` this returns ``returns.mean() * 252`` --
+        byte identical to the previous behavior.
         """
-        if shrinkage is None:
+        if mean_estimator is None or mean_estimator == "sample":
+            return returns.mean() * 252
+        mu = estimate_mean(returns, mean_estimator, lam=ewma_lambda)
+        return pd.Series(mu * 252, index=returns.columns)
+
+    def _estimate_cov_matrix(
+        self,
+        returns: pd.DataFrame,
+        shrinkage: str | None,
+        cov_estimator: str | None = None,
+        ewma_lambda: float = 0.94,
+    ) -> pd.DataFrame:
+        """Annualized covariance: plain sample (default), Ledoit-Wolf, or a named estimator.
+
+        With ``shrinkage is None`` and ``cov_estimator is None`` this returns
+        ``returns.cov() * 252`` -- byte identical to the previous behavior. Any
+        opt-in estimator is computed on the per-period returns then annualized,
+        and labeled with the asset columns.
+        """
+        if shrinkage is None and (cov_estimator is None or cov_estimator == "sample"):
             self.shrinkage_intensity = None
             return returns.cov() * 252
-        shrunk, intensity = ledoit_wolf_shrinkage(returns, target=shrinkage)
-        self.shrinkage_intensity = intensity
-        return pd.DataFrame(shrunk * 252, index=returns.columns, columns=returns.columns)
+        if shrinkage is not None:
+            shrunk, intensity = ledoit_wolf_shrinkage(returns, target=shrinkage)
+            self.shrinkage_intensity = intensity
+            return pd.DataFrame(shrunk * 252, index=returns.columns, columns=returns.columns)
+        # named cov_estimator path
+        if cov_estimator == "oas":
+            from .covariance import oas_shrinkage
+
+            cov, intensity = oas_shrinkage(returns)
+            self.shrinkage_intensity = intensity
+        else:
+            # reached only with a non-None named estimator (not "sample"/"oas")
+            assert cov_estimator is not None
+            self.shrinkage_intensity = None
+            cov = estimate_covariance(returns, cov_estimator, lam=ewma_lambda)
+        return pd.DataFrame(cov * 252, index=returns.columns, columns=returns.columns)
 
     # --- Portfolio statistics ---
 
@@ -136,6 +192,62 @@ class PortfolioOptimizer:
         vol = max(self.portfolio_volatility(weights), 1e-12)
         marginal = cov @ weights
         return weights * marginal / vol
+
+    def risk_attribution(self, weights, groups=None) -> pd.DataFrame:
+        """Euler risk decomposition of portfolio volatility.
+
+        Splits portfolio volatility ``sigma_p`` into per-asset contributions via
+        Euler's theorem (``sigma_p = sum_i CCR_i``). Shares the marginal-risk math
+        with :meth:`portfolio_risk_contributions` (``CCR = w * MCR``).
+
+        Parameters
+        ----------
+        weights:
+            Length-``n`` weight vector (ordered like ``self.tickers``).
+        groups:
+            Optional ``dict[name, (members, gmin, gmax)]`` -- the same convention
+            the ``optimize_*`` methods accept. When given, the returned frame is
+            rolled up per group (using only ``members``; the gmin/gmax bounds are
+            ignored here). Assets not in any group fall under ``"unassigned"``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Indexed by ticker (or group name) with columns:
+            ``weight``, ``mcr`` (marginal contribution = ``(Cov @ w)_i / sigma_p``),
+            ``ccr`` (component contribution = ``w_i * mcr_i``), and ``pct_risk``
+            (``ccr / sigma_p``, summing to 1). The per-asset ``ccr`` values sum to
+            ``sigma_p`` (Euler).
+        """
+        w = np.asarray(weights, dtype=float)
+        cov = np.asarray(self.cov_matrix, dtype=float)
+        vol = max(self.portfolio_volatility(w), 1e-12)
+        mcr = (cov @ w) / vol  # marginal contribution to risk
+        ccr = w * mcr  # component contribution (== portfolio_risk_contributions)
+        pct = ccr / vol
+
+        per_asset = pd.DataFrame(
+            {"weight": w, "mcr": mcr, "ccr": ccr, "pct_risk": pct},
+            index=list(self.tickers),
+        )
+        if not groups:
+            return per_asset
+
+        # roll up per group; MCR is reported as the group's value-weighted MCR
+        # (so group ccr == group weight * group mcr stays consistent).
+        ticker_to_group: dict[str, str] = {}
+        for name, (members, _gmin, _gmax) in groups.items():
+            for member in members:
+                ticker_to_group[member] = name
+        labels = [ticker_to_group.get(t, "unassigned") for t in self.tickers]
+        per_asset = per_asset.assign(_group=labels)
+        agg = per_asset.groupby("_group", sort=False).agg(
+            weight=("weight", "sum"), ccr=("ccr", "sum"), pct_risk=("pct_risk", "sum")
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            agg["mcr"] = np.where(agg["weight"] != 0, agg["ccr"] / agg["weight"], 0.0)
+        agg.index.name = None
+        return agg[["weight", "mcr", "ccr", "pct_risk"]]
 
     def downside_deviation(self, weights: np.ndarray, mar_annual: float | None = None) -> float:
         """Annualized downside deviation of daily returns below the MAR."""

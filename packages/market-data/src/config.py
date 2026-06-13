@@ -76,3 +76,12 @@ class Config:
     enable_depth: bool = field(
         default_factory=lambda: os.getenv("ENABLE_DEPTH", "").lower() in ("1", "true", "yes", "on")
     )
+    # OPT-IN trade-flow bar enrichment (default OFF so the default pipeline is
+    # byte-identical). Set ENABLE_BAR_FEATURES=1/true/yes to compute per-bar
+    # buy/sell volume, signed flow imbalance, and VWAP alongside each OHLCV bar
+    # (persisted to a SEPARATE bar_features table; the ohlcv rows are untouched).
+    enable_bar_features: bool = field(
+        default_factory=lambda: (
+            os.getenv("ENABLE_BAR_FEATURES", "").lower() in ("1", "true", "yes", "on")
+        )
+    )

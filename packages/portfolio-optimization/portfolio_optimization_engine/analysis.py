@@ -100,7 +100,10 @@ def run_analysis(config: AnalysisConfig) -> dict:
         offline=config.offline,
     )
     optimizer.fetch_data()
-    optimizer.calculate_returns()
+    optimizer.calculate_returns(
+        cov_estimator=config.cov_estimator,
+        mean_estimator=config.mean_estimator,
+    )
 
     frontier = optimizer.efficient_frontier(config.num_portfolios, config.random_state)
 
@@ -171,6 +174,20 @@ def print_report(analysis: dict, config: AnalysisConfig) -> None:
         for ticker, weight in zip(tickers, res.weights, strict=False):
             if abs(weight) > 0.01:
                 print(f"    {ticker:6s}: {weight:.2%}")
+
+    # Risk attribution (Euler decomposition of volatility) on the primary portfolio.
+    optimizer = analysis.get("optimizer")
+    primary_name = analysis.get("primary")
+    if optimizer is not None and primary_name in results:
+        primary_weights = results[primary_name].weights
+        attr = optimizer.risk_attribution(primary_weights)
+        print("\n" + "-" * 60)
+        print(f"RISK ATTRIBUTION (on {primary_name})")
+        print("-" * 60)
+        print(f"  {'Asset':6s}  {'Weight':>8s}  {'% Risk':>8s}")
+        for ticker, row in attr.iterrows():
+            if abs(row["weight"]) > 0.01 or abs(row["pct_risk"]) > 0.01:
+                print(f"  {str(ticker):6s}  {row['weight']:>7.2%}  {row['pct_risk']:>7.2%}")
 
     mc = analysis["mc_summary"]
     print("\n" + "-" * 60)

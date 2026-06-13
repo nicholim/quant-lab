@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-228%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-248%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~89%25-brightgreen.svg)](pyproject.toml)
 
 **A multi-asset, event-driven backtester that fills at the next bar's open, persists every run to DuckDB for SQL comparison, and runs walk-forward MPT-optimized portfolios out-of-sample.**
@@ -94,8 +94,9 @@ to the engine's shared `metrics` module) and the run is persisted to DuckDB.
 - **Position Sizing** — Pluggable sizers: fixed-fractional, percent-of-equity, risk-based (vol-targeted), target-weight
 - **Order Types** — MARKET (next-open fill) plus resting LIMIT and STOP orders, with OCO/bracket groups (one fill cancels the siblings)
 - **Protective Exits** — Per-position stop-loss, take-profit, and trailing stops, checked every bar
-- **Parameter Optimization** — Grid-search any strategy with a Sharpe/return heatmap, persisted to DuckDB
-- **Performance Analytics** — Sharpe, Sortino, Calmar ratios, max drawdown, duration, profit factor, **beta/alpha vs a benchmark**
+- **Parameter Optimization** — Grid-search any strategy with a Sharpe/return heatmap, persisted to DuckDB, plus a **Deflated Sharpe Ratio** column (Bailey & López de Prado) that corrects for multiple testing using the grid size as the trial count
+- **Performance Analytics** — Sharpe, Sortino, Calmar ratios, max drawdown, duration, profit factor, the **Probabilistic Sharpe Ratio** (probability the true Sharpe beats a benchmark given series length, skew, kurtosis), and **beta/alpha vs a benchmark**
+- **Trade-level analytics** — avg win/loss, expectancy, payoff ratio, average holding period, exposure time (% of bars in market), and per-round-trip MAE/MFE (max adverse/favorable excursion), all derived post-hoc from the FIFO round trips and equity path
 - **Cross-Strategy Comparison** — SQL queries across all historical backtest runs
 - **Parquet Export** — Export any table to Parquet for external analysis
 - **Visualization** — Static matplotlib (equity curve, drawdown, monthly heatmap) plus **interactive Bokeh** charts (pan/zoom/hover) exported to standalone HTML

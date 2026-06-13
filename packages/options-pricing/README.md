@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-271%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~99%25-brightgreen.svg)](pyproject.toml)
 
 A compact, readable options-pricing library: **Black-Scholes-Merton** closed-form pricing, a
@@ -15,7 +15,7 @@ A compact, readable options-pricing library: **Black-Scholes-Merton** closed-for
 
 Most "learn options pricing" code is either a one-file gist with no tests, or a heavyweight
 institutional library (QuantLib) whose surface area hides the math. This project sits in between:
-small enough to read end-to-end (a handful of focused source files), correct enough to trust (238 tests cross-checked
+small enough to read end-to-end (a handful of focused source files), correct enough to trust (271 tests cross-checked
 against textbook reference values and put-call parity, ~99% coverage), and packaged with a CLI and
 a web UI so you can actually *use* it. It can also pull a **real option chain** from free data and
 show you, per contract, where its own Black-Scholes price disagrees with the live market mid.
@@ -58,6 +58,8 @@ Pure-function pricing core (`src/`), consumed by two interchangeable front ends 
 | **Black-Scholes-Merton price** | `black_scholes_price` | European call/put, continuous dividend yield `q` (Merton form) |
 | **Black-76 futures option** | `black_76_price` (+ `black_76_delta` / `_gamma` / `_vega`) | European option on a future/forward `F` — discounts the forward, no spot carry; completes the vollib "core three" (BS / BSM / Black-76) |
 | **Binomial tree (CRR)** | `BinomialTree.price` | European **and** American; vectorized backward induction |
+| **Finite-difference PDE (American)** | `fd_price` → `FDResult(price, delta, gamma)` (`src/finite_difference.py`) | **Crank-Nicolson** (θ=0.5) on a log-spot grid with **Rannacher startup**; European step via `scipy.linalg.solve_banded`, **American early exercise via PSOR**. Returns the price plus grid-based delta/gamma. Validated to match closed-form Black-Scholes (European limit) and the CRR binomial tree (American). Single-factor BS only — no Heston/ADI/barriers. |
+| **SABR smile (Hagan 2002)** | `sabr_implied_vol` / `fit_sabr_slice` / `sabr_smile` / `SABRParams` (`src/sabr.py`) | Hagan **lognormal** Black-vol approximation, vectorized over strikes with explicit ATM (`z/x(z)→1`) handling; `fit_sabr_slice` calibrates `(α, ρ, ν)` with **β fixed** (desk convention 0.5) via `scipy.optimize.least_squares`. Output is a Black-76 vol → feeds `black_76_price`. The Hagan **approximation** (degrades for very long T / extreme strikes); **not** arbitrage-free, **no** negative-rate shift. |
 | **Greeks** | `delta`, `gamma`, `theta`, `vega`, `rho` | All dividend-adjusted; theta per calendar day, vega/rho per 1% move |
 | **Higher-order Greeks** | `vanna`, `volga` (vomma), `charm` | Closed-form second-order Greeks; `vanna = d(delta)/d(σ)`, `volga = d(vega)/d(σ)`, `charm = -d(delta)/dT` |
 | **Implied volatility** | `implied_volatility` | Newton-Raphson; returns `None` on non-convergence / sub-intrinsic input |
@@ -123,6 +125,22 @@ mc.price, mc.std_error   # ~2.49 ± ~0.009 (vs BS 2.4779)
 from src.vol_surface import fit_svi_surface, svi_smile
 fits = fit_svi_surface(surface_df, spot=100.0)        # {expiry: SVIParams(a,b,rho,m,sigma)}
 svi_smile(fits["2026-09-18"], T=0.3, strikes=[90, 100, 110], forward=100.0)  # fitted IVs
+```
+
+```python
+# Crank-Nicolson finite-difference American pricer (matches the binomial tree)
+from src.finite_difference import fd_price
+fd = fd_price(S=100, K=105, T=0.25, r=0.05, sigma=0.2,
+              option_type="put", american=True)
+fd.price, fd.delta, fd.gamma   # ~6.42, with grid-based Greeks
+
+# Hagan-SABR smile -> Black-76 price (fit (alpha, rho, nu) with beta fixed)
+from src.black_scholes import black_76_price
+from src.sabr import SABRParams, fit_sabr_slice, sabr_implied_vol
+params = fit_sabr_slice(strikes=[90, 100, 110], ivs=[0.24, 0.20, 0.22],
+                        F=100.0, T=0.5, beta=0.5)   # SABRParams(alpha, beta, rho, nu)
+iv = float(sabr_implied_vol(F=100.0, K=110.0, T=0.5, *params))
+black_76_price(F=100.0, K=110.0, T=0.5, r=0.02, sigma=iv, option_type="call")
 ```
 
 ### Run the CLI demo
@@ -283,9 +301,10 @@ This is a small, readable vanilla-options pricer. The honest positioning:
 | Binomial / lattice tree | Yes (CRR) | No | Yes (many) |
 | Exotics, barriers, Asians | No | No | Yes |
 | **Monte-Carlo pricing** | **Yes** (GBM + antithetic & control-variate variance reduction) | **No** | Yes |
-| Stochastic vol (Heston), finite-difference PDE | No | No | Yes |
-| **Vol-surface fit / smile interpolation** | **Yes** (raw-SVI fit per expiry) | **No** | Yes |
-| Arbitrage-free vol-surface calibration | No (SVI fit only) | No | Yes |
+| **Finite-difference PDE (American)** | **Yes** (Crank-Nicolson + Rannacher + PSOR) | **No** | Yes |
+| Stochastic vol (Heston), 2-factor / ADI PDE | No | No | Yes |
+| **Vol-surface fit / smile interpolation** | **Yes** (raw-SVI + Hagan-SABR fit per expiry) | **No** | Yes |
+| Arbitrage-free vol-surface calibration | No (SVI/SABR fit only) | No | Yes |
 | Term-structure / yield-curve bootstrapping | No | No | Yes |
 | **Prices REAL live option chains** (free data) | **Yes** (yfinance + Finnhub) | **No** (no data layer) | **No** (no built-in free feed) |
 | **Per-contract IV solved from live mid** | **Yes** (`price_chain` → `our_iv`/`mispricing`) | **No** | N/A (no feed) |
@@ -298,14 +317,17 @@ This is a small, readable vanilla-options pricer. The honest positioning:
   pure vanilla-BS *calculators* with no data feed, and `QuantLib` ships no built-in free data source —
   here a single call (`price_chain`) pulls a real chain, solves IV per contract from the market mid,
   and surfaces `model_price`/`our_iv`/`mispricing` so you can see where the model disagrees with the tape.
-- **Monte Carlo & vol-surface fit:** `monte_carlo_price` prices European calls/puts **under GBM**
-  with antithetic + control-variate variance reduction (validated to converge to the closed-form BS
-  price within ~3 SE), and `fit_svi_surface` fits a Gatheral raw-SVI smile to the solved IV surface
-  per expiry. Both are honest about scope — the MC is *not* a stochastic-vol engine and the SVI fit is
-  a *smile interpolation*, not an arbitrage-free calibration.
+- **Monte Carlo, finite-difference & vol-surface fits:** `monte_carlo_price` prices European calls/puts
+  **under GBM** with antithetic + control-variate variance reduction (validated to converge to the
+  closed-form BS price within ~3 SE); `fd_price` is a **Crank-Nicolson finite-difference American**
+  pricer (Rannacher startup + PSOR early exercise) validated against both Black-Scholes and the CRR
+  binomial tree; `fit_svi_surface` fits a Gatheral raw-SVI smile and `fit_sabr_slice` a Hagan-SABR
+  smile to the solved IV surface per expiry. All are honest about scope — the MC is *not* a
+  stochastic-vol engine, the FD pricer is single-factor BS only, and the SVI/SABR fits are *smile
+  interpolations* (Hagan SABR is the asymptotic approximation), not arbitrage-free calibrations.
 - **What it intentionally does not do:** exotics/barriers/Asians, stochastic-volatility models
-  (Heston), finite-difference PDE solvers, arbitrage-free vol-surface calibration, or curve
-  bootstrapping.
+  (Heston), 2-factor / ADI PDE solvers, arbitrage-free vol-surface calibration, shifted/negative-rate
+  SABR, or curve bootstrapping.
 - **Who it's for:** learners, interviewers/interviewees, and anyone who wants a hackable vanilla
   pricer. For production derivatives work — exotics, calibration, multi-asset — reach for **QuantLib**.
 
@@ -317,7 +339,7 @@ for the broader ecosystem.
 
 ## Correctness checks
 
-Accuracy here is validated, not asserted. The test suite (238 tests, ~99% branch coverage) includes
+Accuracy here is validated, not asserted. The test suite (271 tests, ~99% branch coverage) includes
 real cross-checks any practitioner would recognize — these are *correctness* checks, not performance
 benchmarks:
 
@@ -338,7 +360,7 @@ benchmarks:
 Run them:
 
 ```bash
-pytest                       # all 238 tests + coverage gate (95%)
+pytest                       # all 271 tests + coverage gate (95%)
 pytest tests/test_accuracy.py -v
 ```
 

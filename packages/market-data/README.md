@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
-[![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-326%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-~98%25-brightgreen.svg)](pyproject.toml)
 
 > An asyncio daemon that streams exchange trades over WebSocket (Binance, Coinbase, Kraken, or
@@ -76,6 +76,16 @@ graph LR
   bookkeeping). Enable with `ENABLE_DEPTH=1` or `--enable-depth`. **Off by default**, so the
   trades-only pipeline is byte-identical; depth snapshots are cached (`book:<symbol>`), published, and
   persisted to a `book` table additively (bids/asks as JSON), reusing the same `StorageBackend`
+- **Trade-flow / VWAP bar enrichment (opt-in)** — with `ENABLE_BAR_FEATURES=1` (or
+  `--enable-bar-features`), every completed 1-minute bar also gets a `BarFeatures` record: buy/sell
+  volume split by the **exact taker/aggressor side** (not a tick-rule guess), signed flow imbalance
+  `(buyV − sellV)/totalV`, and VWAP. Published on `barfeat:<symbol>` and persisted to a **separate**
+  `bar_features` table so the `ohlcv` rows stay byte-identical whether the flag is on or off
+- **Snapshot book features (with depth)** — when the depth feed is on, every L2 snapshot is reduced to
+  a `BookFeatures` bundle (`src/features.py`): midprice, microprice, quoted spread (abs + bps),
+  cumulative top-N depth, and depth imbalance `(B − A)/(B + A)` at L1 and top-N. Cached at
+  `bookfeat:<symbol>` and published per snapshot. NaN-safe: empty/one-sided books degrade to `None`,
+  never an exception. *Snapshot-level only — NOT event-level OFI (see below)*
 - **Multi-symbol fan-out** — one connection subscribes to multiple symbols where the venue supports it
   (Binance combined-stream URL, Coinbase/Kraken subscribe lists); set `SYMBOLS=btcusdt,ethusdt,...` or
   `--symbols`. Each symbol routes to its own cache key / OHLCV accumulator. A single configured symbol
@@ -273,6 +283,40 @@ ENABLE_DEPTH=1 python main.py --symbols btcusdt,ethusdt   # trades + L2 depth, t
 python main.py --enable-depth --symbols btcusdt           # equivalently via the CLI flag
 ```
 
+### Analytics features (opt-in)
+
+Two lightweight, additive feature layers ride the existing feeds — both off by default, and the
+default trades-only path is **byte-identical** when they are off (proven by parity tests).
+
+**Trade-flow / VWAP bar enrichment** (`ENABLE_BAR_FEATURES=1` or `--enable-bar-features`). Each
+completed OHLCV bar additionally yields a `BarFeatures` record computed from the same trades:
+
+- `buy_volume` / `sell_volume` — split by the normalized **taker/aggressor side** carried on every
+  `Trade`, so the flow signing is exact (no tick-rule approximation);
+- `imbalance` — `(buy_volume − sell_volume) / total_volume` in `[-1, +1]` (`0.0` on a zero-volume bar);
+- `vwap` — volume-weighted average price (falls back to the bar close on zero volume).
+
+Rows are published on `barfeat:<symbol>` and persisted to a separate `bar_features` table
+(`time, symbol, buy_volume, sell_volume, imbalance, vwap, interval`) on both backends (and included
+in the DuckDB Parquet export) — the `ohlcv` table is untouched either way.
+
+**Snapshot book features** (computed automatically whenever `ENABLE_DEPTH` is on). Every depth
+snapshot is reduced via the pure functions in `src/features.py` — `midprice`, `microprice`
+(`(bidSz·askPx + askSz·bidPx)/(bidSz + askSz)`), `quoted_spread` / `quoted_spread_bps`,
+`cumulative_depth`, and `depth_imbalance` (`(B − A)/(B + A)` at L1 and over the top-N levels) — into a
+`BookFeatures` bundle cached at `bookfeat:<symbol>` and published on the same channel. All functions
+are NaN-safe and return `None` on empty/one-sided books instead of raising.
+
+> **Honesty note — this is not OFI.** These book features are computed from independent top-N
+> *snapshots*. True order-flow imbalance (Cont–Kukanov–Stoikov) requires event-level add/cancel/trade
+> attribution against an incrementally maintained book, which a 100 ms partial-depth snapshot stream
+> cannot provide. `depth_imbalance` is a snapshot depth imbalance — don't present it as OFI.
+
+```bash
+python main.py --enable-bar-features --symbols btcusdt                 # trades + flow/VWAP bars
+ENABLE_DEPTH=1 ENABLE_BAR_FEATURES=1 python main.py --symbols btcusdt  # everything on
+```
+
 ## Usage
 
 ```python
@@ -361,7 +405,8 @@ market-data-pipeline/
     ├── config.py             # Dataclass-based config from env vars
     ├── adapters.py           # ExchangeAdapter (trades) + DepthAdapter (L2) protocols + adapters
     ├── websocket_client.py   # Async WS client with auto-reconnect (driven by an adapter)
-    ├── normalizer.py         # Trade/OHLCV normalization (parsing delegated to the adapter)
+    ├── normalizer.py         # Trade/OHLCV normalization + opt-in BarFeatures (flow/VWAP)
+    ├── features.py           # Snapshot-level L2 book features (mid/microprice, spread, imbalance)
     ├── cache.py              # Redis caching layer (prices, trades, pub/sub)
     ├── storage_backend.py    # StorageBackend protocol (the persistence contract)
     ├── storage.py            # TimescaleDB backend (hypertables, batch inserts)
@@ -458,7 +503,7 @@ retry budget (see `websocket_client.py`), so transient stream drops do not kill 
 pip install -r requirements.txt
 ruff check .      # lint
 mypy              # type-check (gradual)
-pytest            # 273 tests, ~98% coverage; gate --cov-fail-under=85
+pytest            # 326 tests, ~98% coverage; gate --cov-fail-under=85
 ```
 
 The test suite uses in-memory fakes (`FakeWebSocket` / `FakeRedis` / `FakePool` in

@@ -69,6 +69,22 @@ class RedisCache:
         raw = await self._client.get(f"book:{symbol}")
         return json.loads(raw) if raw else None
 
+    async def set_book_features(self, symbol: str, features: dict) -> None:
+        """Cache the latest snapshot-level book features (opt-in depth feed).
+
+        Stored as a single JSON blob under ``bookfeat:<symbol>`` so a consumer
+        can fetch the current microstructure state (mid/microprice, spread,
+        depth imbalance) without recomputing from the raw book.
+        """
+        assert self._client is not None, "connect() must be called first"
+        await self._client.set(f"bookfeat:{symbol}", json.dumps(features, default=str))
+
+    async def get_book_features(self, symbol: str) -> dict | None:
+        """Retrieve the latest cached book features for a symbol."""
+        assert self._client is not None, "connect() must be called first"
+        raw = await self._client.get(f"bookfeat:{symbol}")
+        return json.loads(raw) if raw else None
+
     async def publish(self, channel: str, message: dict) -> None:
         """Publish a message to a Redis pub/sub channel."""
         assert self._client is not None, "connect() must be called first"
